@@ -1,6 +1,5 @@
 import datasets
 import modules
-import os
 import argparse
 import pandas as pd
 import torch.backends.cudnn as cudnn
@@ -10,17 +9,17 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import random
-import time
-import pdb
 import yaml
 import wandb
 from sklearn.metrics import roc_auc_score
+from pathlib import Path
 # from aggregator import NestedTensor
 
 parser = argparse.ArgumentParser()
 
 #I/O PARAMS
-parser.add_argument('--output', type=str, default='.', help='output directory')
+parser.add_argument('--output_dir', type=str, default='.', help='output directory')
+parser.add_argument('--output_name', type=str, default='final_model', help='name of .pt file saved at end of run')
 parser.add_argument('--log', type=str, default='convergence.csv', help='name of log file')
 parser.add_argument('--method', type=str, default='', choices=[
     'AB-MIL',
@@ -35,29 +34,21 @@ parser.add_argument('--method', type=str, default='', choices=[
     'PatchGCN',
     'DeepGraphConv',
     'ViT_MIL',
-    'DTMIL'
+    'DTMIL',
     'LongNet_ViT'
 ], help='which aggregation method to use')
-parser.add_argument('--data', type=str, default='', choices=[
-    'msk_lung_egfr',
-    'msk_lung_io',
-    'sinai_breast_cancer',
-    'sinai_breast_er',
-    'sinai_lung_egfr',
-    'sinai_ibd_detection',
-    'biome_breast_hrd',
-    'llovet_hcc_io',
-    'sinai_breast_her2',
-    'sinai_breast_pr',
-    'camelyon16'
-], help='which data to use')
+parser.add_argument('--data', type=str, default='', help='Path to dataset in excel')
+parser.add_argument('--y_label', type=str, default='y_1year', help='Column name of y_labels in dataset sheet')
 parser.add_argument('--encoder', type=str, default='', choices=[
-    'tres50_imagenet',
-    'dinosmall',
-    'dinobase',
-    'ctranspath',
-    'uni',
-    ''
+    "UNI",
+    "UNI2-h",
+    "ProvGigaPath",
+    "PhikonV2",
+    "Hibou",
+    "Kaiko",
+    "Virchow2",
+    "MUSK",
+    "Conch"
 ], help='which encoder to use')
 
 parser.add_argument('--mccv', default=1, type=int, choices=list(range(1,22)), help='which seed (default: 1/20)')
@@ -65,6 +56,7 @@ parser.add_argument('--ndim', default=512, type=int, help='output dimension of f
 
 #OPTIMIZATION PARAMS
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum (default: 0.9)')
+parser.add_argument('--batch_size', default=32, type=int, help='batch size (default: 32)')
 parser.add_argument("--lr", default=0.0005, type=float, help="""Learning rate at the end of linear warmup (highest LR used during training). The learning rate is linearly scaled with the batch size, and specified here for a reference batch size of 256.""")
 parser.add_argument('--lr_end', type=float, default=1e-6, help="""Target LR at the end of optimization. We use a cosine LR schedule with linear warmup.""")
 parser.add_argument("--warmup_epochs", default=10, type=int, help="Number of epochs for the linear learning-rate warm up.")
@@ -78,6 +70,7 @@ parser.add_argument('--random_seed', default=0, type=int, help='random seed')
 parser.add_argument('--wandb_project', type=str, help='name of project in wandb')
 parser.add_argument('--wandb_note', type=str, help='note of project in wandb')
 parser.add_argument('--sweep_config', type=str, help='Path to the sweep configuration YAML file')
+parser.add_argument('--sweep_name', type=str, default=None, help='optional override for  wandb sweep name')
 parser.add_argument('--parameter_path', type=str, help='Read hyperparameters after tuning')
 
 def set_random_seed(seed_value):
@@ -106,15 +99,25 @@ def main(config=None):
     
         wandb.config.update(args_dict, allow_val_change=True)
 
-    if args.random_seed:
+    # Randomness
+    if args.random_seed is not None:
         set_random_seed(args.random_seed)
     
-    if not os.path.exists(args.output):
-        os.makedirs(args.output)
+    if not Path(args.output_dir).exists():
+        Path(args.output_dir).mkdir(parents=True)
     
     # Set datasets
-    train_dset, val_dset, test_dset = datasets.get_datasets(mccv=args.mccv, data=args.data, encoder=args.encoder, method=args.method)
-    train_loader = torch.utils.data.DataLoader(train_dset, batch_size=1, shuffle=True, num_workers=args.workers)
+    train_dset, val_dset, test_dset = datasets.get_datasets(mccv=args.mccv,
+                                                            data=args.data,
+                                                            y_label=args.y_label,
+                                                            encoder=args.encoder,
+                                                            method=args.method)
+    train_loader = torch.utils.data.DataLoader(train_dset,
+                                               batch_size=args.batch_size,
+                                               shuffle=True,
+                                               num_workers=args.workers,
+                                               worker_init_fn=lambda worker_id: np.random.seed(args.random_seed + worker_id),
+                                               generator=torch.Generator().manual_seed(args.random_seed))
     val_loader = torch.utils.data.DataLoader(val_dset, batch_size=1, shuffle=False, num_workers=args.workers)
     test_loader = torch.utils.data.DataLoader(test_dset, batch_size=1, shuffle=False, num_workers=args.workers) if test_dset is not None else None
     
@@ -153,7 +156,7 @@ def main(config=None):
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
             probs = test(epoch, val_loader, model)
-            auc = roc_auc_score(val_loader.dataset.df.target, probs)
+            auc = roc_auc_score(val_loader.dataset.df.y, probs)
             # Log this epoch with a note
             wandb.log({"epoch": epoch, "val_auc": auc})
         else:
@@ -163,7 +166,7 @@ def main(config=None):
             current_lr = optimizer.param_groups[0]['lr']
             current_wd = optimizer.param_groups[0]['weight_decay']
             probs = test(epoch, val_loader, model)
-            auc = roc_auc_score(val_loader.dataset.df.target, probs)
+            auc = roc_auc_score(val_loader.dataset.df.y, probs)
             # Regular AUC logging
             wandb.log({"epoch": epoch, "train_loss": loss ,"val_auc": auc, 'lr_step': current_lr, 'wd_step': current_wd})
 
@@ -177,29 +180,27 @@ def main(config=None):
     
     if args.data in ['camelyon16'] and test_loader!= None:
         probs = test(epoch, test_loader, model)
-        auc = roc_auc_score(test_loader.dataset.df.target, probs)
+        auc = roc_auc_score(test_loader.dataset.df.y, probs)
         # Log this epoch with a note
         wandb.log({"epoch": epoch, "test_auc": auc})
     
-    # model_filename = os.path.join(args.output,'final_model.pth')
-    
-    # if epoch == args.nepochs: # only save the last model to artifact
-    ### Model saving logic
-    # obj = {
-    #     'epoch': epoch,
-    #     'state_dict': model.state_dict(),
-    #     'auc': auc,
-    #     'optimizer' : optimizer.state_dict()
-    # }
-    # torch.save(obj, model_filename)
+    # Model saving logic
+    if epoch == args.nepochs: # only save the last model to artifact
+        model_filename = Path(args.output_dir) / f'{args.output_name}.pt'
+        obj = {
+            'epoch': epoch,
+            'state_dict': model.state_dict(),
+            'auc': auc,
+            'optimizer' : optimizer.state_dict()
+        }
+        torch.save(obj, model_filename)
+        print(f"Saved final model at epoch {epoch}")
     
     # # Create a wandb Artifact and add the file to it
     # model_artifact = wandb.Artifact('final_model_checkpoint', type='model')
     # model_artifact.add_file(model_filename)
     # wandb.log_artifact(model_artifact)
 
-    # print(f"Saved final model at epoch {epoch}")
-    
     wandb.finish()
 
 def test(run, loader, model):
@@ -327,7 +328,7 @@ def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epoch
     return schedule
 
 # Define the function to read best hyperparameters
-def find_best_hyperparameters(project_path, data_filter, encoder_filter, method_filter, metric='val_auc', config_interest=None):
+def find_best_hyperparameters(project_path, data_filter, label_filter, encoder_filter, method_filter, metric='val_auc', config_interest=None):
     # Initialize the API and get the runs
     api = wandb.Api()
     runs = api.runs(project_path)
@@ -346,6 +347,7 @@ def find_best_hyperparameters(project_path, data_filter, encoder_filter, method_
     # Apply filters to the DataFrame
     filtered_df = runs_df[
         (runs_df['config.data'] == data_filter) &
+        (runs_df['config.y_label'] == label_filter) &
         (runs_df['config.encoder'] == encoder_filter) &
         (runs_df['config.method'] == method_filter)
     ]
@@ -375,8 +377,8 @@ def find_best_hyperparameters(project_path, data_filter, encoder_filter, method_
 # Function to update the config with best hyperparameters
 def update_args_with_best_hyperparameters(args):
     print(f"Reading fine-tuned hyperparameters from wandb {args.parameter_path}")
-    best_hyperparameters = find_best_hyperparameters(args.parameter_path, args.data, args.encoder, args.method,
-                                                     metric='val_auc', config_interest=['lr', 'weight_decay'])
+    best_hyperparameters = find_best_hyperparameters(args.parameter_path, args.data, args,y_label, args.encoder, args.method,
+                                                     metric='val_auc', config_interest=['lr', 'weight_decay', 'momentum'])
     
     # Update the args namespace with the best hyperparameters
     for param, value in best_hyperparameters.items():
@@ -394,6 +396,7 @@ def update_args_with_selected_hyperparameters(args):
     # Selecting hyperparameters based on specific criteria
     selected_row = df_hyperparameters[
         (df_hyperparameters['data'] == args.data) &
+        (df_hyperparameters['y_label'] == args.y_label) &
         (df_hyperparameters['encoder'] == args.encoder) &
         (df_hyperparameters['method'] == args.method)
     ].iloc[0]
@@ -409,17 +412,21 @@ if __name__ == '__main__':
     args = parser.parse_args()
     
     # Dim of features
-    if args.encoder.startswith('tres50'):
-        args.ndim = 1024
-    elif args.encoder.startswith('dinosmall'):
-        args.ndim = 384
-    elif args.encoder.startswith('dinobase'):
-        args.ndim = 768
-    elif args.encoder.startswith('ctranspath'):
-        args.ndim = 768
-    elif args.encoder.startswith('uni'):
-        args.ndim = 1024
-        
+    dimensions_per_embedder = {
+       "UNI": 1024,
+       "Virchow2": 2560,
+       "H-optimus-0": 1536,
+       "PhikonV2": 1024,
+       "Hibou": 1024,
+       "Kaiko": 384,
+       "MUSK": 2048,
+       "Conch": 512,
+       "UNI2-h": 1536,
+       "ProvGigaPath": 1536
+    }
+    if args.encoder in dimensions_per_embedder:
+       args.ndim = dimensions_per_embedder[args.encoder]
+    
     # Update args with hyperparameters based on the file extension of parameter_path
     if args.parameter_path:
         if args.parameter_path.endswith('.csv'):
@@ -432,6 +439,8 @@ if __name__ == '__main__':
         # Load sweep configuration from the YAML file
         with open(args.sweep_config, 'r') as file:
             sweep_config = yaml.safe_load(file)
+            if args.sweep_name:  # Optional override
+                sweep_config['name'] = args.sweep_name
             parameter_names = list(sweep_config['parameters'].keys())
             print(f"parameter_names:{parameter_names}")
         
