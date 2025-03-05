@@ -4,22 +4,37 @@
 
 from typing import Any, Optional
 import torch
-        
+
 
 if torch.cuda.is_available():
     try:
         if torch.cuda.get_device_capability()[0] > 7:
             from einops import rearrange
             from flash_attn.bert_padding import pad_input, unpad_input
-            from flash_attn.flash_attn_interface import flash_attn_func as _flash_attn_func
-            from flash_attn.flash_attn_interface import flash_attn_varlen_func as _flash_attn_varlen_func
-            from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func as _flash_attn_varlen_qkvpacked_func
-            
-            '''
-            The official implementation of using Flash Attention 2 in LongNet
-            '''
+            from flash_attn.flash_attn_interface import (
+                flash_attn_func as _flash_attn_func,
+            )
+            from flash_attn.flash_attn_interface import (
+                flash_attn_varlen_func as _flash_attn_varlen_func,
+            )
+            from flash_attn.flash_attn_interface import (
+                flash_attn_varlen_qkvpacked_func as _flash_attn_varlen_qkvpacked_func,
+            )
 
-            def flash_attn_varlen_func(q, k, v, dropout=0.0, bias=None, key_padding_mask=None, softmax_scale=None, is_causal=False):
+            """
+            The official implementation of using Flash Attention 2 in LongNet
+            """
+
+            def flash_attn_varlen_func(
+                q,
+                k,
+                v,
+                dropout=0.0,
+                bias=None,
+                key_padding_mask=None,
+                softmax_scale=None,
+                is_causal=False,
+            ):
                 # q, k, v: [b, s, h, d]
                 assert bias is None
 
@@ -27,35 +42,67 @@ if torch.cuda.is_available():
                 qkv = torch.stack([q, k, v], dim=2)
                 batch_size, seqlen, _, nheads, dim = qkv.shape
 
-                x = rearrange(qkv, 'b s three h d -> b s (three h d)')
+                x = rearrange(qkv, "b s three h d -> b s (three h d)")
                 x_unpad, indices, cu_seqlens, max_s = unpad_input(x, key_padding_mask)
-                x_unpad = rearrange(x_unpad, 'nnz (three h d) -> nnz three h d', three=3, h=nheads)
-                output_unpad, lse, _ = _flash_attn_varlen_qkvpacked_func(
-                    x_unpad, cu_seqlens, max_s, dropout,
-                    softmax_scale=softmax_scale, causal=is_causal, return_attn_probs=True
+                x_unpad = rearrange(
+                    x_unpad, "nnz (three h d) -> nnz three h d", three=3, h=nheads
                 )
-                output = rearrange(pad_input(rearrange(output_unpad, 'nnz h d -> nnz (h d)'),
-                                            indices, batch_size, seqlen),
-                                'b s (h d) -> b s h d', h=nheads)
+                output_unpad, lse, _ = _flash_attn_varlen_qkvpacked_func(
+                    x_unpad,
+                    cu_seqlens,
+                    max_s,
+                    dropout,
+                    softmax_scale=softmax_scale,
+                    causal=is_causal,
+                    return_attn_probs=True,
+                )
+                output = rearrange(
+                    pad_input(
+                        rearrange(output_unpad, "nnz h d -> nnz (h d)"),
+                        indices,
+                        batch_size,
+                        seqlen,
+                    ),
+                    "b s (h d) -> b s h d",
+                    h=nheads,
+                )
 
                 if torch.isnan(output).any() or torch.isnan(lse).any():
                     print("Warning: Flash Attention 2 has NaN output")
-                    state_dict = {'qkv': qkv, 'out': output, 'softmax_lse': lse,
-                          'key_padding_mask': key_padding_mask,
-                          'cu_seqlens': cu_seqlens, 'max_seqlen': max_s,
-                          'dropout_p': dropout, 'softmax_scale': softmax_scale}
-                    torch.save(state_dict, 'nan_repro.pt')
-                
+                    state_dict = {
+                        "qkv": qkv,
+                        "out": output,
+                        "softmax_lse": lse,
+                        "key_padding_mask": key_padding_mask,
+                        "cu_seqlens": cu_seqlens,
+                        "max_seqlen": max_s,
+                        "dropout_p": dropout,
+                        "softmax_scale": softmax_scale,
+                    }
+                    torch.save(state_dict, "nan_repro.pt")
+
                 return output, lse
-            
-            def flash_attn_func(q, k, v, dropout=0.0, bias=None, softmax_scale=None, is_causal=False):
+
+            def flash_attn_func(
+                q, k, v, dropout=0.0, bias=None, softmax_scale=None, is_causal=False
+            ):
                 assert bias is None
-                attn, lse, _ = _flash_attn_func(q, k, v, dropout_p=dropout, softmax_scale=softmax_scale, causal=is_causal, return_attn_probs=True)
+                attn, lse, _ = _flash_attn_func(
+                    q,
+                    k,
+                    v,
+                    dropout_p=dropout,
+                    softmax_scale=softmax_scale,
+                    causal=is_causal,
+                    return_attn_probs=True,
+                )
                 return attn, lse
-            
+
             print("\033[92mUsing Flash Attention 2\033[0m")
         else:
-            print("\033[91mWarning: Flash Attention 2 is not successfully loaded. Using XFormers instead.\033[0m")
+            print(
+                "\033[91mWarning: Flash Attention 2 is not successfully loaded. Using XFormers instead.\033[0m"
+            )
             from xformers.ops.fmha import (
                 cutlass,
                 Inputs,
@@ -68,7 +115,17 @@ if torch.cuda.is_available():
             class FlashAttnFunc(torch.autograd.Function):
                 @staticmethod
                 # type: ignore
-                def forward(ctx, q, k, v, dropout=0.0, bias=None, key_padding_mask=None, softmax_scale=None, is_causal=False):
+                def forward(
+                    ctx,
+                    q,
+                    k,
+                    v,
+                    dropout=0.0,
+                    bias=None,
+                    key_padding_mask=None,
+                    softmax_scale=None,
+                    is_causal=False,
+                ):
                     if is_causal:
                         assert bias is None
                         attn_bias = LowerTriangularMask()
@@ -142,7 +199,9 @@ if torch.cuda.is_available():
                         query=query,
                         key=key,
                         value=value,
-                        attn_bias=cls.deserialize_bias(ctx.attn_bias_ctx, attn_bias_tensor),
+                        attn_bias=cls.deserialize_bias(
+                            ctx.attn_bias_ctx, attn_bias_tensor
+                        ),
                         p=ctx.p,
                         scale=ctx.scale,
                     )
@@ -155,7 +214,7 @@ if torch.cuda.is_available():
                         ctx=op_ctx, inp=inp, grad=grad, op=ctx.op_bw
                     )
                     return grads.dq, grads.dk, grads.dv, None, grads.db, None, None
-            
+
             flash_attn_func = FlashAttnFunc.apply
     except ModuleNotFoundError:
         flash_attn_func = None

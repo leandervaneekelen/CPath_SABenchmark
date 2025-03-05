@@ -32,7 +32,10 @@ class BEiT3(nn.Module):
         # being consistent with Fairseq, which starts from 2 for position embedding
         embed_positions = MutliwayEmbedding(
             modules=[
-                PositionalEmbedding(self.vision_embed.num_position_embeddings() + 2, args.encoder_embed_dim),
+                PositionalEmbedding(
+                    self.vision_embed.num_position_embeddings() + 2,
+                    args.encoder_embed_dim,
+                ),
                 PositionalEmbedding(args.max_source_positions, args.encoder_embed_dim),
             ],
             dim=1,

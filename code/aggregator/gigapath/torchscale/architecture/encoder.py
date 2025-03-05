@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from fairscale.nn import checkpoint_wrapper, wrap
+
 try:
     from apex.normalization import FusedLayerNorm as LayerNorm
 except ModuleNotFoundError:
@@ -28,7 +29,9 @@ class EncoderLayer(nn.Module):
         self.args = args
         self.embed_dim = args.encoder_embed_dim
         self.self_attn = self.build_self_attention(self.embed_dim, args)
-        self.self_attn_layer_norm = MultiwayWrapper(args, LayerNorm(self.embed_dim, eps=args.layernorm_eps))
+        self.self_attn_layer_norm = MultiwayWrapper(
+            args, LayerNorm(self.embed_dim, eps=args.layernorm_eps)
+        )
         self.dropout_module = torch.nn.Dropout(args.dropout)
 
         if args.drop_path_rate > 0:
@@ -73,7 +76,9 @@ class EncoderLayer(nn.Module):
                 )
             experts = make_experts(args, self.embed_dim, self.ffn_dim)
             self.moe_layer = MOELayer(gate, experts, args)
-        self.final_layer_norm = MultiwayWrapper(args, LayerNorm(self.embed_dim, eps=args.layernorm_eps))
+        self.final_layer_norm = MultiwayWrapper(
+            args, LayerNorm(self.embed_dim, eps=args.layernorm_eps)
+        )
 
         if args.deepnorm:
             if is_encoder_decoder:
@@ -113,7 +118,15 @@ class EncoderLayer(nn.Module):
     def residual_connection(self, x, residual):
         return residual * self.alpha + x
 
-    def forward(self, x, encoder_padding_mask, attn_mask=None, rel_pos=None, multiway_split_position=None, incremental_state=None):
+    def forward(
+        self,
+        x,
+        encoder_padding_mask,
+        attn_mask=None,
+        rel_pos=None,
+        multiway_split_position=None,
+        incremental_state=None,
+    ):
         if multiway_split_position is not None:
             assert self.args.multiway
             self.apply(set_split_position(multiway_split_position))
@@ -216,7 +229,9 @@ class Encoder(nn.Module):
         self.num_layers = len(self.layers)
 
         if args.encoder_normalize_before and args.normalize_output:
-            self.layer_norm = MultiwayWrapper(args, LayerNorm(embed_dim, eps=args.layernorm_eps))
+            self.layer_norm = MultiwayWrapper(
+                args, LayerNorm(embed_dim, eps=args.layernorm_eps)
+            )
         else:
             self.layer_norm = None
 
@@ -354,7 +369,9 @@ class Encoder(nn.Module):
             assert self.args.multiway
             self.apply(set_split_position(multiway_split_position))
 
-        x, encoder_embedding = self.forward_embedding(src_tokens, token_embeddings, positions)
+        x, encoder_embedding = self.forward_embedding(
+            src_tokens, token_embeddings, positions
+        )
         x = x * (1 - encoder_padding_mask.unsqueeze(-1).type_as(x))
 
         encoder_states = []
@@ -373,11 +390,15 @@ class Encoder(nn.Module):
         for idx, layer in enumerate(self.layers):
             x, l_aux_i = layer(
                 x,
-                encoder_padding_mask=encoder_padding_mask if incremental_state is None else None,
+                encoder_padding_mask=encoder_padding_mask
+                if incremental_state is None
+                else None,
                 attn_mask=attn_mask,
                 rel_pos=rel_pos_bias,
                 multiway_split_position=multiway_split_position,
-                incremental_state=incremental_state[idx] if incremental_state is not None else None,
+                incremental_state=incremental_state[idx]
+                if incremental_state is not None
+                else None,
             )
             if return_all_hiddens:
                 assert encoder_states is not None

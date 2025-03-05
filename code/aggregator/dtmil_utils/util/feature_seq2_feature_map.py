@@ -9,7 +9,9 @@ from torch import Tensor
 from .misc import NestedTensor
 
 
-def convert_feature_seq2_map(feature_seq: Tensor, loc: Tensor, seq_mask: Tensor, map_size: int, is_train=False):
+def convert_feature_seq2_map(
+    feature_seq: Tensor, loc: Tensor, seq_mask: Tensor, map_size: int, is_train=False
+):
     bs = loc.size(0)
     seq_len = loc.size(1)
     out = []
@@ -20,8 +22,12 @@ def convert_feature_seq2_map(feature_seq: Tensor, loc: Tensor, seq_mask: Tensor,
         _, channel, h, w = scale_feature.shape
         scale_feature = scale_feature.view(-1, seq_len, channel, h, w)
 
-        ret_map = torch.zeros((bs, channel, h * map_size, w * map_size)).to(scale_feature.device)
-        padding_mask = torch.zeros((bs, h * map_size, w * map_size)).to(scale_feature.device)
+        ret_map = torch.zeros((bs, channel, h * map_size, w * map_size)).to(
+            scale_feature.device
+        )
+        padding_mask = torch.zeros((bs, h * map_size, w * map_size)).to(
+            scale_feature.device
+        )
 
         b_list = []
         s_list = []
@@ -41,11 +47,12 @@ def convert_feature_seq2_map(feature_seq: Tensor, loc: Tensor, seq_mask: Tensor,
                 r_list.append(r)
                 c_list.append(c)
                 filled = True
-                ret_map[b_idx, :, r * h:(r + 1) * h, c * w:(c + 1) * w] = ret_map[b_idx, :, r * h:(r + 1) * h,
-                                                                          c * w:(c + 1) * w] + scale_feature[
-                                                                              b_idx, seq_idx]
+                ret_map[b_idx, :, r * h : (r + 1) * h, c * w : (c + 1) * w] = (
+                    ret_map[b_idx, :, r * h : (r + 1) * h, c * w : (c + 1) * w]
+                    + scale_feature[b_idx, seq_idx]
+                )
 
-                padding_mask[b_idx, r * h:(r + 1) * h, c * w:(c + 1) * w] = 1
+                padding_mask[b_idx, r * h : (r + 1) * h, c * w : (c + 1) * w] = 1
 
         if not filled:
             print(loc[:30])

@@ -18,8 +18,6 @@ import numpy as np
 from itertools import chain
 
 
-
-
 def all_gather(data):
     """
     Run all_gather on arbitrary picklable data (not necessarily tensors)
@@ -34,7 +32,7 @@ def all_gather(data):
         return [data]
 
     rank = dist.get_rank()
-    device = torch.device('cuda', rank)
+    device = torch.device("cuda", rank)
 
     # serialized to a Tensor
     buffer = pickle.dumps(data)
@@ -164,5 +162,6 @@ class GpuGather:
             return self.meters[attr]
         if attr in self.__dict__:
             return self.__dict__[attr]
-        raise AttributeError("'{}' object has no attribute '{}'".format(
-            type(self).__name__, attr))
+        raise AttributeError(
+            "'{}' object has no attribute '{}'".format(type(self).__name__, attr)
+        )

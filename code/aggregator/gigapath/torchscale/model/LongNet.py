@@ -4,7 +4,7 @@ import os
 import sys
 
 this_file_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(this_file_dir, '../../'))
+sys.path.append(os.path.join(this_file_dir, "../../"))
 
 from torchscale.model import LongNetConfig as longnet_arch
 from torchscale.architecture.config import EncoderConfig
@@ -15,7 +15,6 @@ from fairscale.nn import checkpoint_wrapper, wrap
 
 
 class LongNetDecoderLayer(DecoderLayer):
-
     def build_self_attention(self, embed_dim, args):
         return DilatedAttention(
             args,
@@ -27,8 +26,8 @@ class LongNetDecoderLayer(DecoderLayer):
             subln=args.subln,
         )
 
-class LongNetDecoder(Decoder):
 
+class LongNetDecoder(Decoder):
     def build_decoder_layer(
         self, args, depth, is_moe_layer=False, is_encoder_decoder=False
     ):
@@ -44,8 +43,8 @@ class LongNetDecoder(Decoder):
             layer = wrap(layer)
         return layer
 
-class LongNetEncoderLayer(EncoderLayer):
 
+class LongNetEncoderLayer(EncoderLayer):
     def build_self_attention(self, embed_dim, args):
         return DilatedAttention(
             args,
@@ -57,8 +56,8 @@ class LongNetEncoderLayer(EncoderLayer):
             subln=args.subln,
         )
 
-class LongNetEncoder(Encoder):
 
+class LongNetEncoder(Encoder):
     def build_encoder_layer(
         self, args, depth, is_moe_layer=False, is_encoder_decoder=False
     ):
@@ -78,22 +77,27 @@ class LongNetEncoder(Encoder):
 def make_longnet(args):
     if args.arch in longnet_arch.__dict__.keys():
         longnet_args = longnet_arch.__dict__[args.arch]
-    if hasattr(args, 'dropout'):
-        longnet_args['dropout'] = args.dropout
-    if hasattr(args, 'drop_path_rate'):
-        longnet_args['drop_path_rate'] = args.drop_path_rate
+    if hasattr(args, "dropout"):
+        longnet_args["dropout"] = args.dropout
+    if hasattr(args, "drop_path_rate"):
+        longnet_args["drop_path_rate"] = args.drop_path_rate
     longnet_args = EncoderConfig(**longnet_args)
     model = LongNetEncoder(longnet_args)
-    print('Number of trainable LongNet parameters: ', sum(p.numel() for p in model.parameters() if p.requires_grad))
+    print(
+        "Number of trainable LongNet parameters: ",
+        sum(p.numel() for p in model.parameters() if p.requires_grad),
+    )
     return model
 
 
-def make_longnet_from_name(config_name: str,
-                           dilated_ratio: str='[1, 2, 4, 8, 16]',
-                           segment_length: str='[1024, 2048, 4096, 8192, 16384]',
-                           drop_path_rate: int=0.1,
-                           dropout: float=0.1):
-    '''
+def make_longnet_from_name(
+    config_name: str,
+    dilated_ratio: str = "[1, 2, 4, 8, 16]",
+    segment_length: str = "[1024, 2048, 4096, 8192, 16384]",
+    drop_path_rate: int = 0.1,
+    dropout: float = 0.1,
+):
+    """
     make LongNet model from config name
 
     Arguments:
@@ -108,21 +112,24 @@ def make_longnet_from_name(config_name: str,
         drop path rate
     dropout: float
         dropout rate
-    '''
+    """
     if config_name in longnet_arch.__dict__.keys():
         longnet_args = longnet_arch.__dict__[config_name]
 
-    longnet_args['dropout'] = dropout
-    longnet_args['drop_path_rate'] = drop_path_rate
+    longnet_args["dropout"] = dropout
+    longnet_args["drop_path_rate"] = drop_path_rate
 
     # set dilated ratio and segment length
-    longnet_args['dilated_ratio'] = dilated_ratio
-    longnet_args['segment_length'] = segment_length
+    longnet_args["dilated_ratio"] = dilated_ratio
+    longnet_args["segment_length"] = segment_length
 
-    print('dilated_ratio: ', dilated_ratio)
-    print('segment_length: ', segment_length)
+    print("dilated_ratio: ", dilated_ratio)
+    print("segment_length: ", segment_length)
 
     longnet_args = EncoderConfig(**longnet_args)
     model = LongNetEncoder(longnet_args)
-    print('Number of trainable LongNet parameters: ', sum(p.numel() for p in model.parameters() if p.requires_grad))
+    print(
+        "Number of trainable LongNet parameters: ",
+        sum(p.numel() for p in model.parameters() if p.requires_grad),
+    )
     return model

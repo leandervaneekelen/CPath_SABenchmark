@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from einops import rearrange
+
 try:
     from apex.normalization import FusedLayerNorm as LayerNorm
 except ModuleNotFoundError:
@@ -65,7 +66,16 @@ class MultiheadAttention(nn.Module):
         nn.init.xavier_uniform_(self.out_proj.weight)
         nn.init.constant_(self.out_proj.bias, 0.0)
 
-    def attention_ops(self, q, k, v, key_padding_mask=None, attn_mask=None, rel_pos=None, is_causal=False):
+    def attention_ops(
+        self,
+        q,
+        k,
+        v,
+        key_padding_mask=None,
+        attn_mask=None,
+        rel_pos=None,
+        is_causal=False,
+    ):
         if not self.args.flash_attention:
             q *= self.scaling
             attn_weights = torch.bmm(q, k.transpose(1, 2))
@@ -76,12 +86,14 @@ class MultiheadAttention(nn.Module):
                 attn_weights += attn_mask
 
             if key_padding_mask is not None:
-                attn_weights = rearrange(attn_weights, '(b h) t s -> b h t s', h=self.num_heads)
+                attn_weights = rearrange(
+                    attn_weights, "(b h) t s -> b h t s", h=self.num_heads
+                )
                 attn_weights = attn_weights.masked_fill(
                     key_padding_mask.unsqueeze(1).unsqueeze(2).to(torch.bool),
                     float("-inf"),
                 )
-                attn_weights = rearrange(attn_weights, 'b h t s -> (b h) t s')
+                attn_weights = rearrange(attn_weights, "b h t s -> (b h) t s")
 
             if rel_pos is not None:
                 rel_pos = rel_pos.view(attn_weights.size())
@@ -93,16 +105,18 @@ class MultiheadAttention(nn.Module):
             attn_probs = self.dropout_module(attn_weights)
 
             attn = torch.bmm(attn_probs, v)
-            attn = rearrange(attn, '(b h) l d -> b l (h d)', h=self.num_heads)
+            attn = rearrange(attn, "(b h) l d -> b l (h d)", h=self.num_heads)
         else:
             assert flash_attn_func is not None
             assert rel_pos is None
-            q = rearrange(q, '(b h) l d -> b l h d', h=self.num_heads)
-            k = rearrange(k, '(b h) l d -> b l h d', h=self.num_heads)
-            v = rearrange(v, '(b h) l d -> b l h d', h=self.num_heads)
-            attn, lse = flash_attn_func(q, k, v, self.dropout, attn_mask, None, is_causal)
-            attn = rearrange(attn, 'b l h d -> b l (h d)')
-            attn_weights = lse[:, :, :attn.size(1)]
+            q = rearrange(q, "(b h) l d -> b l h d", h=self.num_heads)
+            k = rearrange(k, "(b h) l d -> b l h d", h=self.num_heads)
+            v = rearrange(v, "(b h) l d -> b l h d", h=self.num_heads)
+            attn, lse = flash_attn_func(
+                q, k, v, self.dropout, attn_mask, None, is_causal
+            )
+            attn = rearrange(attn, "b l h d -> b l (h d)")
+            attn_weights = lse[:, :, : attn.size(1)]
 
         return attn, attn_weights
 
@@ -131,9 +145,9 @@ class MultiheadAttention(nn.Module):
         k = self.k_proj(key)
         v = self.v_proj(value)
 
-        q = rearrange(q, 'b l (h d) -> (b h) l d', h=self.num_heads)
-        k = rearrange(k, 'b l (h d) -> (b h) l d', h=self.num_heads)
-        v = rearrange(v, 'b l (h d) -> (b h) l d', h=self.num_heads)
+        q = rearrange(q, "b l (h d) -> (b h) l d", h=self.num_heads)
+        k = rearrange(k, "b l (h d) -> (b h) l d", h=self.num_heads)
+        v = rearrange(v, "b l (h d) -> (b h) l d", h=self.num_heads)
 
         if incremental_state is not None:
             if "prev_key" in incremental_state:
@@ -161,7 +175,15 @@ class MultiheadAttention(nn.Module):
             k = self.xpos(k, offset=0, downscale=True)
             q = self.xpos(q, offset=offset, downscale=False)
 
-        attn, attn_weights = self.attention_ops(q, k, v, key_padding_mask=key_padding_mask, attn_mask=attn_mask, rel_pos=rel_pos, is_causal=is_causal)
+        attn, attn_weights = self.attention_ops(
+            q,
+            k,
+            v,
+            key_padding_mask=key_padding_mask,
+            attn_mask=attn_mask,
+            rel_pos=rel_pos,
+            is_causal=is_causal,
+        )
 
         if self.inner_attn_ln is not None:
             attn = self.inner_attn_ln(attn)

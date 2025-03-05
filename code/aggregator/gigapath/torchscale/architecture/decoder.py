@@ -15,10 +15,12 @@ from torchscale.component.multihead_attention import MultiheadAttention
 from torchscale.component.relative_position_bias import RelativePositionBias
 from torchscale.component.xmoe.moe_layer import MOELayer
 from torchscale.component.xmoe.routing import Top1Gate, Top2Gate
+
 try:
     from apex.normalization import FusedLayerNorm as LayerNorm
 except ModuleNotFoundError:
     from torch.nn import LayerNorm
+
 
 class DecoderLayer(nn.Module):
     def __init__(
@@ -52,7 +54,9 @@ class DecoderLayer(nn.Module):
             self.encoder_attn_layer_norm = None
         else:
             self.encoder_attn = self.build_encoder_attention(self.embed_dim, args)
-            self.encoder_attn_layer_norm = LayerNorm(self.embed_dim, eps=args.layernorm_eps)
+            self.encoder_attn_layer_norm = LayerNorm(
+                self.embed_dim, eps=args.layernorm_eps
+            )
 
         self.is_moe_layer = is_moe_layer
         self.ffn_dim = args.decoder_ffn_embed_dim

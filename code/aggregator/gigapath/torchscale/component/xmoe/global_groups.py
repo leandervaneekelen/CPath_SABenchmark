@@ -8,6 +8,7 @@ def _find_my_group_index(grouped_ranks):
             return i
     raise RuntimeError
 
+
 def get_moe_group(moe_expert_count=None):
     if dist.is_initialized():
         if not hasattr(get_moe_group, "_moe_groups"):

@@ -53,7 +53,9 @@ class ClassificationHead(nn.Module):
         # setup the slide encoder
         self.feat_layer = [eval(x) for x in feat_layer.split("-")]
         self.feat_dim = len(self.feat_layer) * latent_dim
-        self.slide_encoder = slide_encoder.create_model(pretrained, model_arch, in_chans=input_dim, **kwargs)
+        self.slide_encoder = slide_encoder.create_model(
+            pretrained, model_arch, in_chans=input_dim, **kwargs
+        )
 
         # whether to freeze the pretrained model
         if freeze:

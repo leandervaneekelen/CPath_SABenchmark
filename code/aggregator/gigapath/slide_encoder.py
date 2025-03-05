@@ -79,18 +79,20 @@ class LongNetViT(nn.Module):
         The drop path rate used in the model.
     """
 
-    def __init__(self, 
-                in_chans=1536, 
-                embed_dim=256, 
-                depth=12, 
-                slide_ngrids=1000, 
-                tile_size=256,
-                max_wsi_size=262144,
-                norm_layer=nn.LayerNorm, 
-                global_pool=False, 
-                dropout=0.25, 
-                drop_path_rate=0.1, 
-                **kwargs):
+    def __init__(
+        self,
+        in_chans=1536,
+        embed_dim=256,
+        depth=12,
+        slide_ngrids=1000,
+        tile_size=256,
+        max_wsi_size=262144,
+        norm_layer=nn.LayerNorm,
+        global_pool=False,
+        dropout=0.25,
+        drop_path_rate=0.1,
+        **kwargs
+    ):
         super().__init__()
 
         # --------------------------------------------------------------------------
@@ -100,15 +102,22 @@ class LongNetViT(nn.Module):
         self.slide_ngrids = slide_ngrids
         num_patches = slide_ngrids**2
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.register_buffer('pos_embed', torch.zeros(1, num_patches + 1, embed_dim), persistent=False)  # fixed sin-cos embedding
+        self.register_buffer(
+            "pos_embed", torch.zeros(1, num_patches + 1, embed_dim), persistent=False
+        )  # fixed sin-cos embedding
 
         self.encoder_name = "LongNet_{}_layers_{}_dim".format(depth, embed_dim)
         if kwargs.get("mlp_ratio", 4.0) != 4.0:
             self.encoder_name += "_mlp{}".format(kwargs.get("mlp_ratio"))
-        
+
         # get optimal segment length
         segment_length = self.get_optimal_segment_length(max_wsi_size, tile_size)
-        self.encoder = make_longnet_from_name(self.encoder_name, drop_path_rate=drop_path_rate, dropout=dropout, segment_length=segment_length)
+        self.encoder = make_longnet_from_name(
+            self.encoder_name,
+            drop_path_rate=drop_path_rate,
+            dropout=dropout,
+            segment_length=segment_length,
+        )
         self.norm = norm_layer(embed_dim)
         # --------------------------------------------------------------------------
 
@@ -120,7 +129,9 @@ class LongNetViT(nn.Module):
     def initialize_vit_weights(self):
         # initialization
         # initialize (and freeze) pos_embed by sin-cos embedding
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], self.slide_ngrids, cls_token=True)
+        pos_embed = get_2d_sincos_pos_embed(
+            self.pos_embed.shape[-1], self.slide_ngrids, cls_token=True
+        )
         self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
 
         # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
@@ -133,17 +144,19 @@ class LongNetViT(nn.Module):
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
-    def get_optimal_segment_length(self, max_wsi_size: int=262144, tile_size: int=256) -> str:
-        '''
+    def get_optimal_segment_length(
+        self, max_wsi_size: int = 262144, tile_size: int = 256
+    ) -> str:
+        """
         Get the optimal segment length based on the maximum image size and tile size.
-        
+
         Arguments:
         ----------
         max_wsi_size: int
             The maximum size of the WSI.
         tile_size: int
             The tile size.
-        '''
+        """
         max_seq_len = (max_wsi_size // tile_size) ** 2
         # calculate the segment length
         segment_length = np.linspace(np.log2(1024), int(np.log2(max_seq_len)), 5)
@@ -205,7 +218,9 @@ class LongNetViT(nn.Module):
 
         # apply Transformer blocks
         if all_layer_embed:
-            x_list = self.encoder(src_tokens=None, token_embeddings=x, return_all_hiddens=all_layer_embed)["encoder_states"]
+            x_list = self.encoder(
+                src_tokens=None, token_embeddings=x, return_all_hiddens=all_layer_embed
+            )["encoder_states"]
         else:
             x_list = [self.encoder(src_tokens=None, token_embeddings=x)["encoder_out"]]
 
@@ -222,12 +237,23 @@ class LongNetViT(nn.Module):
         return outcomes
 
 
-def create_model(pretrained: str, model_arch: str, in_chans: int, local_dir: str = os.path.join(os.path.expanduser("~")), **kwargs):
+def create_model(
+    pretrained: str,
+    model_arch: str,
+    in_chans: int,
+    local_dir: str = os.path.join(os.path.expanduser("~")),
+    **kwargs
+):
     model = timm.create_model(model_arch, pretrained=False, in_chans=in_chans, **kwargs)
 
     if pretrained.startswith("hf_hub:"):
         hub_name = pretrained.split(":")[1]
-        huggingface_hub.hf_hub_download(hub_name, filename="slide_encoder.pth", local_dir=local_dir, force_download=True)
+        huggingface_hub.hf_hub_download(
+            hub_name,
+            filename="slide_encoder.pth",
+            local_dir=local_dir,
+            force_download=True,
+        )
         local_path = os.path.join(local_dir, "slide_encoder.pth")
     else:
         local_path = pretrained
@@ -244,26 +270,52 @@ def create_model(pretrained: str, model_arch: str, in_chans: int, local_dir: str
             for k in unexpected_keys:
                 print("Unexpected ", k)
 
-        print("\033[92m Successfully Loaded Pretrained GigaPath model from {} \033[00m".format(pretrained))
+        print(
+            "\033[92m Successfully Loaded Pretrained GigaPath model from {} \033[00m".format(
+                pretrained
+            )
+        )
     else:
-        print("\033[93m Pretrained weights not found at {}. Randomly initialized the model! \033[00m".format(local_path))
+        print(
+            "\033[93m Pretrained weights not found at {}. Randomly initialized the model! \033[00m".format(
+                local_path
+            )
+        )
 
     return model
 
 
 @register_model
 def gigapath_slide_enc12l768d(**kwargs):
-    model = LongNetViT(embed_dim=768, depth=12, mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model = LongNetViT(
+        embed_dim=768,
+        depth=12,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs
+    )
     return model
 
 
 @register_model
 def gigapath_slide_enc24l1024d(**kwargs):
-    model = LongNetViT(embed_dim=1024, depth=24, mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model = LongNetViT(
+        embed_dim=1024,
+        depth=24,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs
+    )
     return model
 
 
 @register_model
 def gigapath_slide_enc12l1536d(**kwargs):
-    model = LongNetViT(embed_dim=1536, depth=12, mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model = LongNetViT(
+        embed_dim=1536,
+        depth=12,
+        mlp_ratio=4,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6),
+        **kwargs
+    )
     return model

@@ -1,4 +1,3 @@
-
 # ------------------------------------------------------------------------
 # DT-MIL
 # Copyright (c) 2021 Tencent. All Rights Reserved.
@@ -12,7 +11,7 @@ def check_size(size):
     if type(size) == int:
         size = (size, size)
     if type(size) != tuple:
-        raise TypeError('size is int or tuple')
+        raise TypeError("size is int or tuple")
     return size
 
 
@@ -68,19 +67,21 @@ def scale_augmentation(image: torch.Tensor, mask, scale_range, crop_size):
     mask = mask.squeeze(0).squeeze(0)
 
     if scale_size <= crop_size[0]:
-        image, mask = pad_image_and_mask(image, mask, target_size=crop_size[0], image_fill_value=0, mask_fill_value=1)
+        image, mask = pad_image_and_mask(
+            image, mask, target_size=crop_size[0], image_fill_value=0, mask_fill_value=1
+        )
     else:
         image, mask = random_crop(image, mask, crop_size)
 
     return image, mask
 
 
-def cutout(image_origin: torch.Tensor, mask_size, mask_value='mean'):
+def cutout(image_origin: torch.Tensor, mask_size, mask_value="mean"):
 
     image = np.copy(image_origin)
-    if mask_value == 'mean':
+    if mask_value == "mean":
         mask_value = image.mean()
-    elif mask_value == 'random':
+    elif mask_value == "random":
         mask_value = np.random.randint(0, 256)
 
     h, w, _ = image.shape
@@ -100,14 +101,22 @@ def cutout(image_origin: torch.Tensor, mask_size, mask_value='mean'):
 def pad_image_and_mask(image, mask, target_size, image_fill_value=0, mask_fill_value=1):
     h, w, c = image.shape
     h_pad_upper = (target_size - h) // 2
-    h_pad_down = (target_size - h - h_pad_upper)
+    h_pad_down = target_size - h - h_pad_upper
 
     w_pad_left = (target_size - w) // 2
-    w_pad_right = (target_size - w - w_pad_left)
+    w_pad_right = target_size - w - w_pad_left
 
-    ret_img = np.pad(image, ((h_pad_upper, h_pad_down), (w_pad_left, w_pad_right), (0, 0)), 'constant',
-                     constant_values=image_fill_value)
-    ret_mask = np.pad(mask, ((h_pad_upper, h_pad_down), (w_pad_left, w_pad_right)), 'constant',
-                      constant_values=mask_fill_value)
+    ret_img = np.pad(
+        image,
+        ((h_pad_upper, h_pad_down), (w_pad_left, w_pad_right), (0, 0)),
+        "constant",
+        constant_values=image_fill_value,
+    )
+    ret_mask = np.pad(
+        mask,
+        ((h_pad_upper, h_pad_down), (w_pad_left, w_pad_right)),
+        "constant",
+        constant_values=mask_fill_value,
+    )
 
     return ret_img, ret_mask

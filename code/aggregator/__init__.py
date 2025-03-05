@@ -8,5 +8,6 @@ from .model_set_mil import MIL_Sum_FC_surv, MIL_Attention_FC_surv, MIL_Cluster_F
 from .dsmil import DSMIL
 from .transformer import PureTransformer
 from .gigapath.slide_encoder import LongNetViT
+
 # from .dtmil import DTMIL
 # from .dtmil_utils.util.misc import NestedTensor

@@ -26,10 +26,12 @@ def _get_clones(module, N):
 
 
 class DeformableTransformerMIL(nn.Module):
-    """ This is the DT-MIL module that performs WSI Classification """
+    """This is the DT-MIL module that performs WSI Classification"""
 
-    def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels):
-        """ Initializes the model.
+    def __init__(
+        self, backbone, transformer, num_classes, num_queries, num_feature_levels
+    ):
+        """Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
@@ -40,7 +42,6 @@ class DeformableTransformerMIL(nn.Module):
         self.num_queries = num_queries
         self.transformer = transformer
         hidden_dim = transformer.d_model
-
 
         # Modify class_embed for all queries embbeding，and then perform classification on the whole WSI
         self.class_embed = nn.Linear(hidden_dim * num_queries, num_classes)
@@ -56,23 +57,32 @@ class DeformableTransformerMIL(nn.Module):
             input_proj_list = []
             for _ in range(num_backbone_outs):
                 in_channels = backbone.num_channels[_]
-                input_proj_list.append(nn.Sequential(
-                    nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
-                ))
+                input_proj_list.append(
+                    nn.Sequential(
+                        nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, hidden_dim),
+                    )
+                )
             for _ in range(num_feature_levels - num_backbone_outs):
-                input_proj_list.append(nn.Sequential(
-                    nn.Conv2d(in_channels, hidden_dim, kernel_size=3, stride=2, padding=1),
-                    nn.GroupNorm(32, hidden_dim),
-                ))
+                input_proj_list.append(
+                    nn.Sequential(
+                        nn.Conv2d(
+                            in_channels, hidden_dim, kernel_size=3, stride=2, padding=1
+                        ),
+                        nn.GroupNorm(32, hidden_dim),
+                    )
+                )
                 in_channels = hidden_dim
             self.input_proj = nn.ModuleList(input_proj_list)
         else:
-            self.input_proj = nn.ModuleList([
-                nn.Sequential(
-                    nn.Conv2d(backbone.num_channels[0], hidden_dim, kernel_size=1),
-                    nn.GroupNorm(32, hidden_dim),
-                )])
+            self.input_proj = nn.ModuleList(
+                [
+                    nn.Sequential(
+                        nn.Conv2d(backbone.num_channels[0], hidden_dim, kernel_size=1),
+                        nn.GroupNorm(32, hidden_dim),
+                    )
+                ]
+            )
         self.backbone = backbone
 
         prior_prob = 0.01
@@ -87,21 +97,20 @@ class DeformableTransformerMIL(nn.Module):
 
         self.class_embed = nn.ModuleList([self.class_embed for _ in range(num_pred)])
 
-
     def forward(self, samples: NestedTensor):
-        """ The forward expects a NestedTensor, which consists of:
-               - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
-               - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
+        """The forward expects a NestedTensor, which consists of:
+           - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
+           - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
 
-            It returns a dict with the following elements:
-               - "pred_logits": the classification logits (including no-object) for all queries.
-                                Shape= [batch_size x num_queries x (num_classes + 1)]
-               - "pred_boxes": The normalized boxes coordinates for all queries, represented as
-                               (center_x, center_y, height, width). These values are normalized in [0, 1],
-                               relative to the size of each individual image (disregarding possible padding).
-                               See PostProcess for information on how to retrieve the unnormalized bounding box.
-               - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
-                                dictionnaries containing the two above keys for each decoder layer.
+        It returns a dict with the following elements:
+           - "pred_logits": the classification logits (including no-object) for all queries.
+                            Shape= [batch_size x num_queries x (num_classes + 1)]
+           - "pred_boxes": The normalized boxes coordinates for all queries, represented as
+                           (center_x, center_y, height, width). These values are normalized in [0, 1],
+                           relative to the size of each individual image (disregarding possible padding).
+                           See PostProcess for information on how to retrieve the unnormalized bounding box.
+           - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
+                            dictionnaries containing the two above keys for each decoder layer.
         """
 
         features, pos = self.backbone(samples)
@@ -125,7 +134,9 @@ class DeformableTransformerMIL(nn.Module):
                 else:
                     src = self.input_proj[l](srcs[-1])
                 m = samples.mask
-                mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(torch.bool)[0]
+                mask = F.interpolate(m[None].float(), size=src.shape[-2:]).to(
+                    torch.bool
+                )[0]
                 pos_l = self.backbone[1](NestedTensor(src, mask)).to(src.dtype)
                 srcs.append(src)
                 masks.append(mask)
@@ -133,14 +144,16 @@ class DeformableTransformerMIL(nn.Module):
 
         query_embeds = self.query_embed.weight
 
-        hs, encoder_intermediate_result = self.transformer(srcs, masks, pos, query_embeds)
+        hs, encoder_intermediate_result = self.transformer(
+            srcs, masks, pos, query_embeds
+        )
 
         hs = hs.view(hs.shape[0], -1)
-        
+
         logits = self.class_embed[-1](hs)
-        Y_hat = torch.topk(logits, 1, dim = 1)[1]
-        Y_prob = F.softmax(logits, dim = 1)
-        results_dict = {'logits': logits, 'Y_prob': Y_prob, 'Y_hat': Y_hat}
+        Y_hat = torch.topk(logits, 1, dim=1)[1]
+        Y_prob = F.softmax(logits, dim=1)
+        results_dict = {"logits": logits, "Y_prob": Y_prob, "Y_hat": Y_hat}
         return results_dict
 
     @torch.jit.unused
@@ -148,8 +161,11 @@ class DeformableTransformerMIL(nn.Module):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_boxes': b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+        return [
+            {"pred_logits": a, "pred_boxes": b}
+            for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+        ]
+
 
 class Loss(nn.Module):
     def __init__(self, alpha: float = 0.25, gamma: float = 2, num_class=2):
@@ -161,6 +177,7 @@ class Loss(nn.Module):
     def forward(self, inputs, targets):
 
         return torch.nn.functional.cross_entropy(inputs, targets)
+
 
 def DTMIL(ndim, n_classes):
 

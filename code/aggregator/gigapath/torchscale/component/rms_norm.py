@@ -4,6 +4,7 @@
 import torch
 import torch.nn as nn
 
+
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine=True):
         super().__init__()
@@ -12,7 +13,7 @@ class RMSNorm(nn.Module):
         if self.elementwise_affine:
             self.weight = nn.Parameter(torch.ones(dim))
         else:
-            self.register_parameter('weight', None)
+            self.register_parameter("weight", None)
 
     def _norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
@@ -22,4 +23,3 @@ class RMSNorm(nn.Module):
         if self.weight is not None:
             output = output * self.weight
         return output
-    

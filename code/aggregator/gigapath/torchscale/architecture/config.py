@@ -67,9 +67,9 @@ class EncoderConfig(object):
         self.postprocessing()
 
     def postprocessing(self):
-        if self.segment_length is not None and self.segment_length != '':
+        if self.segment_length is not None and self.segment_length != "":
             self.segment_length = eval(self.segment_length)
-        if self.dilated_ratio is not None and self.dilated_ratio != '':
+        if self.dilated_ratio is not None and self.dilated_ratio != "":
             self.dilated_ratio = eval(self.dilated_ratio)
 
         if self.deepnorm:
@@ -144,9 +144,9 @@ class DecoderConfig(object):
         self.postprocessing()
 
     def postprocessing(self):
-        if self.segment_length is not None and self.segment_length != '':
+        if self.segment_length is not None and self.segment_length != "":
             self.segment_length = eval(self.segment_length)
-        if self.dilated_ratio is not None and self.dilated_ratio != '':
+        if self.dilated_ratio is not None and self.dilated_ratio != "":
             self.dilated_ratio = eval(self.dilated_ratio)
 
         if self.deepnorm:
@@ -229,9 +229,9 @@ class EncoderDecoderConfig(object):
         self.postprocessing()
 
     def postprocessing(self):
-        if self.segment_length is not None and self.segment_length != '':
+        if self.segment_length is not None and self.segment_length != "":
             self.segment_length = eval(self.segment_length)
-        if self.dilated_ratio is not None and self.dilated_ratio != '':
+        if self.dilated_ratio is not None and self.dilated_ratio != "":
             self.dilated_ratio = eval(self.dilated_ratio)
 
         if self.deepnorm:

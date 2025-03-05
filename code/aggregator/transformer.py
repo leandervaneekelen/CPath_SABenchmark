@@ -7,6 +7,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+
 class PureTransformer(nn.Module):
     def __init__(self, ndim=1024, n_classes=2):
         super(PureTransformer, self).__init__()
@@ -29,7 +30,7 @@ class PureTransformer(nn.Module):
         # tgt: (T, N, E)(T,N,E)
         # src_mask: (S, S)(S,S)
         x = tensors
-        #mask = sampler.mask  # N * S
+        # mask = sampler.mask  # N * S
         b, h, w, c = x.shape
         x = x.view(b, c, -1)
         x = x.permute(0, 2, 1)  # N S E
@@ -48,6 +49,6 @@ class PureTransformer(nn.Module):
 
         logits = logit.squeeze(0)
         Y_hat = torch.argmax(logits, dim=1)
-        Y_prob = F.softmax(logits, dim = 1)
-        results_dict = {'logits': logits, 'Y_prob': Y_prob, 'Y_hat': Y_hat}
+        Y_prob = F.softmax(logits, dim=1)
+        results_dict = {"logits": logits, "Y_prob": Y_prob, "Y_hat": Y_hat}
         return results_dict

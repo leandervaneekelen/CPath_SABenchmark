@@ -39,15 +39,29 @@ class FrozenBatchNorm2d(torch.nn.Module):
         self.register_buffer("running_var", torch.ones(n))
         self.eps = eps
 
-    def _load_from_state_dict(self, state_dict, prefix, local_metadata, strict,
-                              missing_keys, unexpected_keys, error_msgs):
-        num_batches_tracked_key = prefix + 'num_batches_tracked'
+    def _load_from_state_dict(
+        self,
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        num_batches_tracked_key = prefix + "num_batches_tracked"
         if num_batches_tracked_key in state_dict:
             del state_dict[num_batches_tracked_key]
 
         super(FrozenBatchNorm2d, self)._load_from_state_dict(
-            state_dict, prefix, local_metadata, strict,
-            missing_keys, unexpected_keys, error_msgs)
+            state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
 
     def forward(self, x):
         # move reshapes to the beginning
@@ -63,11 +77,17 @@ class FrozenBatchNorm2d(torch.nn.Module):
 
 
 class BackboneBase(nn.Module):
-
-    def __init__(self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool):
+    def __init__(
+        self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool
+    ):
         super().__init__()
         for name, parameter in backbone.named_parameters():
-            if not train_backbone or 'layer2' not in name and 'layer3' not in name and 'layer4' not in name:
+            if (
+                not train_backbone
+                or "layer2" not in name
+                and "layer3" not in name
+                and "layer4" not in name
+            ):
                 parameter.requires_grad_(False)
         if return_interm_layers:
             # return_layers = {"layer1": "0", "layer2": "1", "layer3": "2", "layer4": "3"}
@@ -75,7 +95,7 @@ class BackboneBase(nn.Module):
             self.strides = [8, 16, 32]
             self.num_channels = [512, 1024, 2048]
         else:
-            return_layers = {'layer4': "0"}
+            return_layers = {"layer4": "0"}
             self.strides = [32]
             self.num_channels = [2048]
         self.body = IntermediateLayerGetter(backbone, return_layers=return_layers)
@@ -100,33 +120,38 @@ except ImportError:
     from urllib.request import urlretrieve
 
 
-def load_url(url, model_dir='../pretrained', map_location=None):
+def load_url(url, model_dir="../pretrained", map_location=None):
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
-    filename = url.split('/')[-1]
+    filename = url.split("/")[-1]
     cached_file = os.path.join(model_dir, filename)
     if not os.path.exists(cached_file):
         sys.stderr.write('Downloading: "{}" to {}\n'.format(url, cached_file))
         urlretrieve(url, cached_file)
 
-    print(f'load from : {cached_file}')
+    print(f"load from : {cached_file}")
     return torch.load(cached_file, map_location=map_location)
 
 
 class Backbone(BackboneBase):
     """ResNet backbone with frozen BatchNorm."""
 
-    def __init__(self, name: str,
-                 train_backbone: bool,
-                 return_interm_layers: bool,
-                 dilation: bool):
+    def __init__(
+        self,
+        name: str,
+        train_backbone: bool,
+        return_interm_layers: bool,
+        dilation: bool,
+    ):
         norm_layer = FrozenBatchNorm2d
 
         backbone = getattr(torchvision.models, name)(
             replace_stride_with_dilation=[False, False, dilation],
-            pretrained=False, norm_layer=norm_layer)
+            pretrained=False,
+            norm_layer=norm_layer,
+        )
 
-        state = load_url('resnet18-5c106cde.pth')
+        state = load_url("resnet18-5c106cde.pth")
         backbone.load_state_dict(state)
         super().__init__(backbone, train_backbone, return_interm_layers)
         if dilation:
@@ -170,7 +195,13 @@ class WSIJoiner(nn.Sequential):
         tensor_list = tensor_list.view(-1, C, H, W)
         xs = self[0](tensor_list)
 
-        out = convert_feature_seq2_map(xs, loc=loc, seq_mask=seq_mask, map_size=self.map_size, is_train=self.training)
+        out = convert_feature_seq2_map(
+            xs,
+            loc=loc,
+            seq_mask=seq_mask,
+            map_size=self.map_size,
+            is_train=self.training,
+        )
         pos = []
 
         # position encoding
@@ -193,7 +224,7 @@ class FeatureMapDrBackbone(nn.Sequential):
             nn.Conv2d(num_input_channels, out_channels, kernel_size=1),
             nn.BatchNorm2d(out_channels),
             nn.LeakyReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=1)
+            nn.Conv2d(out_channels, out_channels, kernel_size=1),
         )
 
     def forward(self, tensor_list: NestedTensor):
@@ -209,9 +240,7 @@ class FeatureMapDrBackbone(nn.Sequential):
 
 
 class FeatureMapJoiner(nn.Sequential):
-    """
-
-    """
+    """ """
 
     def __init__(self, backbone, position_embedding):
         super().__init__(backbone, position_embedding)
@@ -222,9 +251,7 @@ class FeatureMapJoiner(nn.Sequential):
 
     def forward(self, tensor_list: NestedTensor):
         # print(f'Wththe')
-        xs = {
-            'input_feature_map': self[0](tensor_list)
-        }
+        xs = {"input_feature_map": self[0](tensor_list)}
         out: List[NestedTensor] = []
         pos = []
         for name, x in sorted(xs.items()):
@@ -242,7 +269,9 @@ def build_backbone(args):
     position_embedding = build_position_encoding(args)
     train_backbone = args.lr_backbone > 0
     return_interm_layers = args.masks or (args.num_feature_levels > 1)
-    backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
+    backbone = Backbone(
+        args.backbone, train_backbone, return_interm_layers, args.dilation
+    )
     model = Joiner(backbone, position_embedding)
     return model
 
@@ -251,13 +280,15 @@ def build_WSIBackbone(args):
     position_embedding = build_position_encoding(args)
     train_backbone = args.lr_backbone > 0
     return_interm_layers = args.masks or (args.num_feature_levels > 1)
-    backbone = Backbone(args.backbone, train_backbone, return_interm_layers, args.dilation)
+    backbone = Backbone(
+        args.backbone, train_backbone, return_interm_layers, args.dilation
+    )
     model = WSIJoiner(backbone, position_embedding, args.map_size)
     return model
 
 
 def build_WSIFeatureMapBackbone(ndim):
-    position_embedding = build_position_encoding(position_embedding='sine')
+    position_embedding = build_position_encoding(position_embedding="sine")
     backbone = FeatureMapDrBackbone(num_input_channels=ndim, out_channels=256)
     model = FeatureMapJoiner(backbone, position_embedding)
     return model

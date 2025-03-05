@@ -63,8 +63,6 @@ class _AllToAll(torch.autograd.Function):
         return (None, _AllToAll.apply(ctx.group, *grad_output))
 
 
-
-
 class MOELayer(Base):
     """MOELayer module which implements MixtureOfExperts as described in Gshard_.
     ::

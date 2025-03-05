@@ -31,7 +31,7 @@ class PureTransformer(nn.Module):
         # tgt: (T, N, E)(T,N,E)
         # src_mask: (S, S)(S,S)
         x = sampler.tensors
-        #mask = sampler.mask  # N * S
+        # mask = sampler.mask  # N * S
         b, c, h, w = x.shape
         x = x.view(b, c, -1)
         x = x.permute(0, 2, 1)  # N S E
