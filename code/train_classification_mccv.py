@@ -389,7 +389,7 @@ def find_best_hyperparameters(project_path, data_filter, label_filter, encoder_f
 # Function to update the config with best hyperparameters
 def update_args_with_best_hyperparameters(args):
     print(f"Reading fine-tuned hyperparameters from wandb {args.parameter_path}")
-    best_hyperparameters = find_best_hyperparameters(args.parameter_path, args.data, args,y_label, args.encoder, args.method,
+    best_hyperparameters = find_best_hyperparameters(args.parameter_path, args.data, args.y_label, args.encoder, args.method,
                                                      metric='val_auc', config_interest=['lr', 'weight_decay', 'momentum'])
     
     # Update the args namespace with the best hyperparameters
