@@ -155,34 +155,34 @@ def main(config=None):
         
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            probs = test(epoch, val_loader, model)
-            auc = roc_auc_score(val_loader.dataset.df.y, probs)
+            probs, val_loss = test(epoch, val_loader, model, criterion)
+            val_auc = roc_auc_score(val_loader.dataset.df.y, probs)
             # Log this epoch with a note
-            wandb.log({"epoch": epoch, "val_auc": auc})
+            wandb.log({"epoch": epoch, "val_auc": val_auc, "val_loss": val_loss})
         else:
             # Regular training and validation logic
-            loss = train(epoch, train_loader, model, criterion, optimizer, lr_schedule, wd_schedule)
+            train_loss = train(epoch, train_loader, model, criterion, optimizer, lr_schedule, wd_schedule)
             # Get the current learning rate from the first parameter group
             current_lr = optimizer.param_groups[0]['lr']
             current_wd = optimizer.param_groups[0]['weight_decay']
-            probs = test(epoch, val_loader, model)
-            auc = roc_auc_score(val_loader.dataset.df.y, probs)
+            probs, val_loss = test(epoch, val_loader, model, criterion)
+            val_auc = roc_auc_score(val_loader.dataset.df.y, probs)
             # Regular AUC logging
-            wandb.log({"epoch": epoch, "train_loss": loss ,"val_auc": auc, 'lr_step': current_lr, 'wd_step': current_wd})
+            wandb.log({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss, "val_auc": val_auc, 'lr_step': current_lr, 'wd_step': current_wd})
 
             # Check if the current model is the best one
-            if auc > best_auc:
-                print(f"New best model found at epoch {epoch} with AUC: {auc}")
-                best_auc = auc
+            if val_auc > best_auc:
+                print(f"New best model found at epoch {epoch} with AUC: {val_auc}")
+                best_auc = val_auc
                 # Log this event to wandb
-                wandb.run.summary["best_auc"] = auc
+                wandb.run.summary["best_auc"] = val_auc
                 wandb.run.summary["best_epoch"] = epoch
     
     if args.data in ['camelyon16'] and test_loader!= None:
-        probs = test(epoch, test_loader, model)
-        auc = roc_auc_score(test_loader.dataset.df.y, probs)
+        probs, _ = test(epoch, test_loader, model, criterion)
+        test_auc = roc_auc_score(test_loader.dataset.df.y, probs)
         # Log this epoch with a note
-        wandb.log({"epoch": epoch, "test_auc": auc})
+        wandb.log({"epoch": epoch, "test_auc": test_auc})
     
     # Model saving logic
     if epoch == args.nepochs: # only save the last model to artifact
@@ -190,7 +190,7 @@ def main(config=None):
         obj = {
             'epoch': epoch,
             'state_dict': model.state_dict(),
-            'auc': auc,
+            'auc': val_auc,
             'optimizer' : optimizer.state_dict()
         }
         torch.save(obj, model_filename)
@@ -203,9 +203,11 @@ def main(config=None):
 
     wandb.finish()
 
-def test(run, loader, model):
+def test(run, loader, model, criterion):
     # Set model in test mode
     model.eval()
+    # Initialize loss
+    running_loss = 0.
     # Initialize probability vector
     probs = torch.FloatTensor(len(loader)).cuda()
     # Loop through batches
@@ -236,9 +238,19 @@ def test(run, loader, model):
                 results_dict = model(feat)
             
             logits, Y_prob, Y_hat = (results_dict[key] for key in ['logits', 'Y_prob', 'Y_hat'])
+            ## Calculate loss
+            target = input['target'].long().cuda()
+            loss = criterion(logits, target)
+            if args.method in ['GTP']:
+                mc1 = results_dict['mc1']
+                o1 = results_dict['o1']
+                loss = loss + mc1 + o1
+            running_loss += loss.item()
+
             ## Clone output to output vector
             probs[i] = Y_prob.detach()[:,1].item()
-    return probs.cpu().numpy()
+    mean_loss = running_loss / len(loader)
+    return probs.cpu().numpy(), mean_loss
 
 def train(run, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
     # Set model in training mode
