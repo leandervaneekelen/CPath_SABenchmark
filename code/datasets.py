@@ -8,13 +8,13 @@ from pathlib import Path
 def get_datasets(mccv, data, y_label, encoder, method):
     df = pd.read_csv(data)
     df_train = (
-        df.loc[df[f"mccv{mccv}"] == "train", [encoder, y_label]]
+        df.loc[df[f"mccv{mccv}_{y_label}"] == "train", [encoder, y_label]]
         .reset_index(drop=True)
         .dropna()
         .rename(columns={y_label: "y"})
     )
     df_val = (
-        df.loc[df[f"mccv{mccv}"] == "val", [encoder, y_label]]
+        df.loc[df[f"mccv{mccv}_{y_label}"] == "val", [encoder, y_label]]
         .reset_index(drop=True)
         .dropna()
         .rename(columns={y_label: "y"})
