@@ -22,39 +22,43 @@ from aggregator import (
 # PureTransformer, DTMIL
 
 
-def get_aggregator(method="", ndim=1024, **kwargs):
+def get_aggregator(method, n_classes, ndim=1024, **kwargs):
     # GMA
     if method == "AB-MIL":
-        return GMA(ndim=ndim, **kwargs)
+        return GMA(n_classes=n_classes, ndim=ndim, **kwargs)
     elif method == "AB-MIL_FC_small":
-        return MIL_Attention_FC_surv(ndim=ndim, n_classes=2, size_arg="small", **kwargs)
+        return MIL_Attention_FC_surv(
+            ndim=ndim, n_classes=n_classes, size_arg="small", **kwargs
+        )
     elif method == "AB-MIL_FC_big":
-        return MIL_Attention_FC_surv(ndim=ndim, n_classes=2, size_arg="big", **kwargs)
+        return MIL_Attention_FC_surv(
+            ndim=ndim, n_classes=n_classes, size_arg="big", **kwargs
+        )
     # DeepSMILE
     elif method == "VarMIL":
-        return VarAttention(ndim=ndim, **kwargs)
+        return VarAttention(n_classes=n_classes, ndim=ndim, **kwargs)
     # CLAM
     if method == "CLAM_SB":
-        return CLAM_SB(ndim=ndim, **kwargs)
+        return CLAM_SB(n_classes=n_classes, ndim=ndim, **kwargs)
     elif method == "CLAM_MB":
-        return CLAM_MB(ndim=ndim, **kwargs)
+        return CLAM_MB(n_classes=n_classes, ndim=ndim, **kwargs)
     # TransMIL
     elif method == "ViT_MIL":
-        return PureTransformer(ndim=ndim, n_classes=2, **kwargs)
+        return PureTransformer(n_classes=n_classes, ndim=ndim, **kwargs)
     elif method == "transMIL":
-        return TransMIL(ndim=ndim, **kwargs)
+        return TransMIL(n_classes=n_classes, ndim=ndim, **kwargs)
     # DSMIL
     elif method == "DS-MIL":
-        return DSMIL(ndim=ndim, n_classes=2, **kwargs)
+        return DSMIL(n_classes=n_classes, ndim=ndim, **kwargs)
     # GTP
     elif method == "GTP":
-        return GTP(ndim=ndim, **kwargs)
+        return GTP(n_classes=n_classes, ndim=ndim, **kwargs)
     # PatchGCN
     elif method == "PatchGCN":
-        return PatchGCN_Surv(ndim=ndim, n_classes=2, **kwargs)
+        return PatchGCN_Surv(n_classes=n_classes, ndim=ndim, **kwargs)
     # DeepGraphConv
     elif method == "DeepGraphConv":
-        return DeepGraphConv_Surv(ndim=ndim, n_classes=2, **kwargs)
+        return DeepGraphConv_Surv(n_classes=n_classes, ndim=ndim, **kwargs)
     # elif method == 'MIL_Sum_FC':
     #     return MIL_Sum_FC_surv(ndim=ndim, n_classes=2, **kwargs)
     # elif method == 'MIL_Cluster_FC':

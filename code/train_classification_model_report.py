@@ -191,7 +191,7 @@ def main(config=None):
         os.makedirs(args.output)
 
     # Set datasets
-    train_dset, val_dset = datasets.get_datasets(
+    train_dset, val_dset = datasets.get_classification_datasets(
         mccv=args.mccv, data=args.data, encoder=args.encoder, method=args.method
     )
     train_loader = torch.utils.data.DataLoader(

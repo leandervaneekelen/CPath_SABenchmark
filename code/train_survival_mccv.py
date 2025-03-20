@@ -1,20 +1,25 @@
-import datasets
-import modules
 import argparse
+import random
+import yaml
+import wandb
 import pandas as pd
+import numpy as np
+from pathlib import Path
+
+
 import torch.backends.cudnn as cudnn
 import torch
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import random
-import yaml
-import wandb
-from sklearn.metrics import roc_auc_score
-from pathlib import Path
+
+# TODO: use cumulative_dynamic_auc somewhere
+from sksurv.metrics import concordance_index_censored, cumulative_dynamic_auc
 
 # from aggregator import NestedTensor
+import survival_losses
+import datasets
+import modules
 
 parser = argparse.ArgumentParser()
 
@@ -93,6 +98,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--batch_size", default=32, type=int, help="batch size (default: 32)"
+)
+parser.add_argument(
+    "--gradient_accumulation_steps",
+    default=1,
+    type=int,
+    help="Number of batches to accumulate loss over before doing an optimizer step.",
 )
 parser.add_argument(
     "--lr",
@@ -195,13 +206,14 @@ def main(config=None):
         Path(args.output_dir).mkdir(parents=True)
 
     # Set datasets
-    train_dset, val_dset, test_dset = datasets.get_classification_datasets(
+    train_dset, val_dset, test_dset = datasets.get_survival_datasets(
         mccv=args.mccv,
         data=args.data,
         y_label=args.y_label,
         encoder=args.encoder,
         method=args.method,
     )
+    n_bins = train_dset.n_bins
     train_loader = torch.utils.data.DataLoader(
         train_dset,
         batch_size=args.batch_size,
@@ -222,16 +234,17 @@ def main(config=None):
     )
 
     # Get model
-    model = modules.get_aggregator(method=args.method, ndim=args.ndim)
+    model = modules.get_aggregator(method=args.method, n_classes=n_bins, ndim=args.ndim)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
     # Set loss
-    criterion = nn.CrossEntropyLoss().to(device)
+    criterion = survival_losses.NLLSurvLoss(alpha=0.15)
 
     # Set optimizer
     params_groups = get_params_groups(model)
-    optimizer = optim.AdamW(params_groups)
+    # optimizer = optim.AdamW(params_groups)
+    optimizer = optim.SGD(params_groups, momentum=args.momentum)
 
     # Set schedulers
     lr_schedule = cosine_scheduler(
@@ -249,19 +262,18 @@ def main(config=None):
     )
     cudnn.benchmark = True
 
-    best_auc = 0.0
+    best_cindex = 0.0
     # Main training loop
     for epoch in range(args.nepochs + 1):
 
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            probs, val_loss = test(epoch, val_loader, model, criterion)
-            val_auc = roc_auc_score(val_loader.dataset.df.y, probs)
+            val_loss, val_cindex = test(epoch, val_loader, model, criterion)
             # Log this epoch with a note
-            wandb.log({"epoch": epoch, "val_auc": val_auc, "val_loss": val_loss})
+            wandb.log({"epoch": epoch, "val_cindex": val_cindex, "val_loss": val_loss})
         else:
             # Regular training and validation logic
-            train_loss = train(
+            train_loss, train_cindex = train(
                 epoch,
                 train_loader,
                 model,
@@ -273,33 +285,34 @@ def main(config=None):
             # Get the current learning rate from the first parameter group
             current_lr = optimizer.param_groups[0]["lr"]
             current_wd = optimizer.param_groups[0]["weight_decay"]
-            probs, val_loss = test(epoch, val_loader, model, criterion)
-            val_auc = roc_auc_score(val_loader.dataset.df.y, probs)
-            # Regular AUC logging
+            val_loss, val_cindex = test(epoch, val_loader, model, criterion)
+            # Regular logging
             wandb.log(
                 {
                     "epoch": epoch,
                     "train_loss": train_loss,
                     "val_loss": val_loss,
-                    "val_auc": val_auc,
+                    "train_cindex": train_cindex,
+                    "val_cindex": val_cindex,
                     "lr_step": current_lr,
                     "wd_step": current_wd,
                 }
             )
 
             # Check if the current model is the best one
-            if val_auc > best_auc:
-                print(f"New best model found at epoch {epoch} with AUC: {val_auc}")
-                best_auc = val_auc
+            if val_cindex > best_cindex:
+                print(
+                    f"New best model found at epoch {epoch} with C-index: {val_cindex}"
+                )
+                best_cindex = val_cindex
                 # Log this event to wandb
-                wandb.run.summary["best_auc"] = val_auc
+                wandb.run.summary["best_c_index"] = val_cindex
                 wandb.run.summary["best_epoch"] = epoch
 
     if args.data in ["camelyon16"] and test_loader != None:
-        probs, _ = test(epoch, test_loader, model, criterion)
-        test_auc = roc_auc_score(test_loader.dataset.df.y, probs)
+        _, test_cindex = test(epoch, test_loader, model, criterion)
         # Log this epoch with a note
-        wandb.log({"epoch": epoch, "test_auc": test_auc})
+        wandb.log({"epoch": epoch, "test_c_index": test_cindex})
 
     # Model saving logic
     if epoch == args.nepochs:  # only save the last model to artifact
@@ -307,7 +320,7 @@ def main(config=None):
         obj = {
             "epoch": epoch,
             "state_dict": model.state_dict(),
-            "auc": val_auc,
+            "c_index": val_cindex,
             "optimizer": optimizer.state_dict(),
         }
         torch.save(obj, model_filename)
@@ -321,122 +334,166 @@ def main(config=None):
     wandb.finish()
 
 
-def test(run, loader, model, criterion):
-    # Set model in test mode
+def test(epoch, loader, model, criterion):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     model.eval()
-    # Initialize loss
     running_loss = 0.0
-    # Initialize probability vector
-    probs = torch.FloatTensor(len(loader)).cuda()
+    censoring, times_to_events = [], []
+    risk_scores, labels = [], []
+
     # Loop through batches
     with torch.no_grad():
-        for i, input in enumerate(loader):  #
+        for i, batch in enumerate(loader):  #
             ## Copy batch to GPU
 
+            # Get features, reshape and copy to GPU
             if args.method in ["ViT_MIL", "DTMIL"]:
-                feat = input["feat_map"].float().permute(0, 3, 1, 2).cuda()
+                feat = batch["feat_map"].float().permute(0, 3, 1, 2)
             else:
-                ## Copy to GPU
-                feat = input["features"].squeeze(0).cuda()
+                feat = batch["features"].squeeze(0)
+            feat = feat.to(device)
 
-            ## Forward pass
+            # Get targets
+            discrete_labels, time_to_events, censored = (
+                batch["discrete_label"],
+                batch["time_to_event"],
+                batch["censored"],
+            )
+            discrete_labels, censored = discrete_labels.to(device), censored.to(device)
+
+            # Forward pass
             if args.method in ["GTP"]:
-                adj = input["adj_mtx"].float().cuda()
-                mask = input["mask"].float().cuda()
+                adj = batch["adj_mtx"].float().to(device)
+                mask = batch["mask"].float().to(device)
                 results_dict = model(feat, adj, mask)
             elif args.method in ["PatchGCN", "DeepGraphConv"]:
-                edge_index = input["edge_index"].squeeze(0).cuda()
-                edge_latent = input["edge_latent"].squeeze(0).cuda()
+                edge_index = batch["edge_index"].squeeze(0).to(device)
+                edge_latent = batch["edge_latent"].squeeze(0).to(device)
                 results_dict = model(
                     feat=feat, edge_index=edge_index, edge_latent=edge_latent
                 )
             # elif args.method in ['DTMIL']:
-            #     mask = input['mask'].bool().cuda()
+            #     mask = input['mask'].bool().to(device)
             #     tensors = NestedTensor(feat, mask)
             #     results_dict = model(tensors)
             else:
                 results_dict = model(feat)
 
-            logits, Y_prob, Y_hat = (
-                results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
-            )
+            # Calculate discrete hazards/survival function
+            logits = results_dict["logits"]  # [batch_size, n_bins]
+            hazards = torch.sigmoid(logits)
+            surv = torch.cumprod(1 - hazards, dim=1)  # [batch_size]
+
             ## Calculate loss
-            target = input["target"].long().cuda()
-            loss = criterion(logits, target)
-            if args.method in ["GTP"]:
-                mc1 = results_dict["mc1"]
-                o1 = results_dict["o1"]
-                loss = loss + mc1 + o1
+            mc1 = results_dict.get("mc1", 0.0)  # Optional aux loss from GTP
+            o1 = results_dict.get("o1", 0.0)  # Optional aux loss from GTP
+            loss = (
+                criterion(hazards, surv, discrete_labels, censored, alpha=0.0)
+                + mc1
+                + o1
+            )
             running_loss += loss.item()
 
-            ## Clone output to output vector
-            probs[i] = Y_prob.detach()[:, 1].item()
-    mean_loss = running_loss / len(loader)
-    return probs.cpu().numpy(), mean_loss
+            # Calculate risk scores
+            risk = -torch.sum(surv, dim=1)  # [batch_size]
+            risk_scores.extend(risk.clone().tolist())
+            labels.extend(discrete_labels.clone().tolist())
+            censoring.extend(censored.clone().tolist())
+            times_to_events.extend(time_to_events.clone().tolist())
+
+    # Calculate c-index of the epoch
+    c_index = concordance_index_censored(
+        [bool(1 - c) for c in censoring], times_to_events, risk_scores
+    )[0]
+
+    # Return metrics
+    mean_val_loss = running_loss / len(loader)
+    return mean_val_loss, c_index
 
 
-def train(run, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
-    # Set model in training mode
+def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.train()
-    # Initialize loss
     running_loss = 0.0
+    censoring, times_to_events = [], []
+    risk_scores, labels = [], []
+
     # Loop through batches
-    for i, input in enumerate(loader):  #
+    for i, batch in enumerate(loader):  #
         ## Update weight decay and learning rate according to their schedule
-        it = len(loader) * (run - 1) + i  # global training iteration
+        it = len(loader) * (epoch - 1) + i  # global training iteration
         for j, param_group in enumerate(optimizer.param_groups):
             param_group["lr"] = lr_schedule[it]
             if j == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
 
-        target = input["target"].long().cuda()
-
+        # Get features, reshape and copy to GPU
         if args.method in ["ViT_MIL", "DTMIL"]:
-            feat = input["feat_map"].float().permute(0, 3, 1, 2).cuda()
+            feat = batch["feat_map"].float().permute(0, 3, 1, 2)
         else:
-            ## Copy to GPU
-            feat = input["features"].squeeze(0).cuda()
+            feat = batch["features"].squeeze(0)
+        feat = feat.to(device)
 
-        ## Forward pass
+        # Get targets
+        discrete_labels, time_to_events, censored = (
+            batch["discrete_label"],
+            batch["time_to_event"],
+            batch["censored"],
+        )
+        discrete_labels, censored = discrete_labels.to(device), censored.to(device)
+
+        # Forward pass
         if args.method == "GTP":
-            adj = input["adj_mtx"].float().cuda()
-            mask = input["mask"].float().cuda()
+            adj = batch["adj_mtx"].float().to(device)
+            mask = batch["mask"].float().to(device)
             results_dict = model(feat, adj, mask)
-            logits = results_dict["logits"]
-            mc1 = results_dict["mc1"]
-            o1 = results_dict["o1"]
-            ## Calculate loss
-            loss = criterion(logits, target)
-            loss = loss + mc1 + o1
-
         elif args.method in ["PatchGCN", "DeepGraphConv"]:
-            edge_index = input["edge_index"].squeeze(0).cuda()
-            edge_latent = input["edge_latent"].squeeze(0).cuda()
+            edge_index = batch["edge_index"].squeeze(0).to(device)
+            edge_latent = batch["edge_latent"].squeeze(0).to(device)
             results_dict = model(
                 feat=feat, edge_index=edge_index, edge_latent=edge_latent
             )
-            logits = results_dict["logits"]
-            ## Calculate loss
-            loss = criterion(logits, target)
-
         # elif args.method in ['DTMIL']:
-        #     mask = input['mask'].bool().cuda()
+        #     mask = input['mask'].bool().to(device)
         #     tensors = NestedTensor(feat, mask)
         #     results_dict = model(tensors)
-
         else:
             results_dict = model(feat)
-            logits = results_dict["logits"]
-            ## Calculate loss
-            loss = criterion(logits, target)
 
-        ## Optimization step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        ## Store loss
+        # Calculate discrete hazards/survival function
+        logits = results_dict["logits"]  # [batch_size, n_bins]
+        hazards = torch.sigmoid(logits)
+        surv = torch.cumprod(1 - hazards, dim=1)  # [batch_size]
+
+        # Calculate loss
+        mc1 = results_dict.get("mc1", 0.0)  # Optional aux loss from GTP
+        o1 = results_dict.get("o1", 0.0)  # Optional aux loss from GTP
+        loss = criterion(hazards, surv, discrete_labels, censored) + mc1 + o1
         running_loss += loss.item()
-    return running_loss / len(loader)
+
+        # Calculate risk scores
+        risk = -torch.sum(surv, dim=1)  # [batch_size]
+        risk_scores.extend(risk.clone().tolist())
+        labels.extend(discrete_labels.clone().tolist())
+        censoring.extend(censored.clone().tolist())
+        times_to_events.extend(time_to_events.clone().tolist())
+
+        # Optimization step with optional gradient accumulation
+        loss /= args.gradient_accumulation_steps
+        loss.backward()
+        if (i + 1) % args.gradient_accumulation_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+
+    # Calculate c-index of the epoch
+    c_index = concordance_index_censored(
+        [bool(1 - c) for c in censoring], times_to_events, risk_scores
+    )[0]
+
+    # Return metrics
+    mean_train_loss = running_loss / len(loader)
+    return mean_train_loss, c_index
 
 
 def get_params_groups(model):
@@ -456,6 +513,11 @@ def get_params_groups(model):
 def cosine_scheduler(
     base_value, final_value, epochs, niter_per_ep, warmup_epochs=0, start_warmup_value=0
 ):
+
+    assert (
+        warmup_epochs < epochs
+    ), f"Warmup epochs ({warmup_epochs}) must be less than total epochs ({epochs})."
+
     warmup_schedule = np.array([])
     warmup_iters = warmup_epochs * niter_per_ep
     if warmup_epochs > 0:
@@ -478,7 +540,7 @@ def find_best_hyperparameters(
     label_filter,
     encoder_filter,
     method_filter,
-    metric="val_auc",
+    metric="val_cindex",
     config_interest=None,
 ):
     # Initialize the API and get the runs
@@ -538,7 +600,7 @@ def update_args_with_best_hyperparameters(args):
         args.y_label,
         args.encoder,
         args.method,
-        metric="val_auc",
+        metric="val_cindex",
         config_interest=["lr", "weight_decay", "momentum"],
     )
 
