@@ -268,7 +268,7 @@ def main(config=None):
 
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            val_loss, val_cindex = test(epoch, val_loader, model, criterion)
+            val_loss, val_cindex, _ = test(epoch, val_loader, model, criterion)
             # Log this epoch with a note
             wandb.log({"epoch": epoch, "val_cindex": val_cindex, "val_loss": val_loss})
         else:
@@ -282,11 +282,17 @@ def main(config=None):
                 lr_schedule,
                 wd_schedule,
             )
-            # Get the current learning rate from the first parameter group
+            val_loss, val_cindex, val_risk_scores = test(
+                epoch, val_loader, model, criterion
+            )
+
+            _, mean_auc, _ = get_cumulative_dynamic_auc(
+                train_dset.df, val_dset.df, val_risk_scores, args.y_label
+            )
+
+            # Regular logging
             current_lr = optimizer.param_groups[0]["lr"]
             current_wd = optimizer.param_groups[0]["weight_decay"]
-            val_loss, val_cindex = test(epoch, val_loader, model, criterion)
-            # Regular logging
             wandb.log(
                 {
                     "epoch": epoch,
@@ -294,6 +300,7 @@ def main(config=None):
                     "val_loss": val_loss,
                     "train_cindex": train_cindex,
                     "val_cindex": val_cindex,
+                    "val_mean_cumulative_auc": mean_auc,
                     "lr_step": current_lr,
                     "wd_step": current_wd,
                 }
@@ -407,9 +414,9 @@ def test(epoch, loader, model, criterion):
         [bool(1 - c) for c in censoring], times_to_events, risk_scores
     )[0]
 
-    # Return metrics
+    # Return metrics & risk scores
     mean_val_loss = running_loss / len(loader)
-    return mean_val_loss, c_index
+    return mean_val_loss, c_index, risk_scores
 
 
 def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
@@ -494,6 +501,39 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
     # Return metrics
     mean_train_loss = running_loss / len(loader)
     return mean_train_loss, c_index
+
+
+def get_cumulative_dynamic_auc(train_data, test_data, test_risk_scores, verbose=False):
+    cols = ["censored", "y"]
+    train_tuples = train_data[cols].values
+    tune_tuples = test_data[cols].values
+    survival_train = np.array(
+        list(zip(train_tuples[:, 0], train_tuples[:, 1])), dtype=np.dtype("bool,float")
+    )
+    survival_tune = np.array(
+        list(zip(tune_tuples[:, 0], tune_tuples[:, 1])), dtype=np.dtype("bool,float")
+    )
+
+    import ipdb
+
+    ipdb.set_trace()
+
+    train_min, train_max = train_data["y"].min(), train_data["y"].max()
+    test_min, test_max = test_data["y"].min(), test_data["y"].max()
+    min_y = math.ceil(test_min / 12)  # Convert months to years
+    max_y = math.floor(test_max / 12)
+    times = np.arange(min_y, max_y, 1)  # Evaluate AUC at 1-year time intervals
+    if train_min <= test_min < test_max < train_max:
+        auc, mean_auc = cumulative_dynamic_auc(
+            survival_train, survival_tune, test_risk_scores, times * 12
+        )
+    else:
+        if verbose:
+            print(
+                f"test data ({test_min},{test_max}) is not within time range of training data ({train_min},{train_max})"
+            )
+        auc, mean_auc = None, None
+    return auc, mean_auc, times
 
 
 def get_params_groups(model):
