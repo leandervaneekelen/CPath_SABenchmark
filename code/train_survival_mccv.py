@@ -1,25 +1,25 @@
-import argparse
-import random
-import yaml
-import wandb
-import pandas as pd
-import numpy as np
-from pathlib import Path
-
-
 import torch.backends.cudnn as cudnn
 import torch
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 
-# TODO: use cumulative_dynamic_auc somewhere
+import pandas as pd
+import numpy as np
+import argparse
+import random
+import yaml
+import math
+import wandb
+
 from sksurv.metrics import concordance_index_censored, cumulative_dynamic_auc
+from pathlib import Path
 
 # from aggregator import NestedTensor
 import survival_losses
 import datasets
 import modules
+from constants import DIMENSIONS_PER_EMBEDDER
 
 parser = argparse.ArgumentParser()
 
@@ -648,20 +648,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Dim of features
-    dimensions_per_embedder = {
-        "UNI": 1024,
-        "Virchow2": 2560,
-        "H-optimus-0": 1536,
-        "PhikonV2": 1024,
-        "Hibou": 1024,
-        "Kaiko": 384,
-        "MUSK": 2048,
-        "Conch": 512,
-        "UNI2-h": 1536,
-        "ProvGigaPath": 1536,
-    }
-    if args.encoder in dimensions_per_embedder:
-        args.ndim = dimensions_per_embedder[args.encoder]
+    if args.encoder in DIMENSIONS_PER_EMBEDDER:
+        args.ndim = DIMENSIONS_PER_EMBEDDER[args.encoder]
 
     # Update args with hyperparameters based on the file extension of parameter_path
     if args.parameter_path:
