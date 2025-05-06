@@ -66,17 +66,7 @@ parser.add_argument(
     "--encoder",
     type=str,
     default="",
-    choices=[
-        "UNI",
-        "UNI2-h",
-        "ProvGigaPath",
-        "PhikonV2",
-        "Hibou",
-        "Kaiko",
-        "Virchow2",
-        "MUSK",
-        "Conch",
-    ],
+    choices=DIMENSIONS_PER_EMBEDDER.keys(),
     help="which encoder to use",
 )
 
