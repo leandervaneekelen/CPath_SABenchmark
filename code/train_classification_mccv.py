@@ -89,6 +89,12 @@ parser.add_argument(
     "--batch_size", default=32, type=int, help="batch size (default: 32)"
 )
 parser.add_argument(
+    "--gradient_accumulation_steps",
+    default=1,
+    type=int,
+    help="Number of batches to accumulate loss over before doing an optimizer step.",
+)
+parser.add_argument(
     "--lr",
     default=0.0005,
     type=float,
@@ -216,7 +222,7 @@ def main(config=None):
     )
 
     # Get model
-    model = modules.get_aggregator(method=args.method, ndim=args.ndim)
+    model = modules.get_aggregator(method=args.method, ndim=args.ndim, n_classes=2) # TODO: make `n_classes` dynamic 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
@@ -315,37 +321,39 @@ def main(config=None):
     wandb.finish()
 
 
-def test(run, loader, model, criterion):
+def test(epoch, loader, model, criterion):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Set model in test mode
     model.eval()
     # Initialize loss
     running_loss = 0.0
     # Initialize probability vector
-    probs = torch.FloatTensor(len(loader)).cuda()
+    probs = torch.FloatTensor(len(loader)).to(device)
     # Loop through batches
     with torch.no_grad():
-        for i, input in enumerate(loader):  #
-            ## Copy batch to GPU
+        for i, batch in enumerate(loader):
 
+            # Get features, reshape and copy to GPU
             if args.method in ["ViT_MIL", "DTMIL"]:
-                feat = input["feat_map"].float().permute(0, 3, 1, 2).cuda()
+                feat = batch["feat_map"].float().permute(0, 3, 1, 2)
             else:
-                ## Copy to GPU
-                feat = input["features"].squeeze(0).cuda()
+                feat = batch["features"].squeeze(0)
+            feat = feat.to(device)
 
-            ## Forward pass
+            # Forward pass
             if args.method in ["GTP"]:
-                adj = input["adj_mtx"].float().cuda()
-                mask = input["mask"].float().cuda()
+                adj = batch["adj_mtx"].float().to(device)
+                mask = batch["mask"].float().to(device)
                 results_dict = model(feat, adj, mask)
             elif args.method in ["PatchGCN", "DeepGraphConv"]:
-                edge_index = input["edge_index"].squeeze(0).cuda()
-                edge_latent = input["edge_latent"].squeeze(0).cuda()
+                edge_index = batch["edge_index"].squeeze(0).to(device)
+                edge_latent = batch["edge_latent"].squeeze(0).to(device)
                 results_dict = model(
                     feat=feat, edge_index=edge_index, edge_latent=edge_latent
                 )
             # elif args.method in ['DTMIL']:
-            #     mask = input['mask'].bool().cuda()
+            #     mask = input['mask'].bool().to(device)
             #     tensors = NestedTensor(feat, mask)
             #     results_dict = model(tensors)
             else:
@@ -355,7 +363,7 @@ def test(run, loader, model, criterion):
                 results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
             )
             ## Calculate loss
-            target = input["target"].long().cuda()
+            target = batch["target"].long().to(device)
             loss = criterion(logits, target)
             if args.method in ["GTP"]:
                 mc1 = results_dict["mc1"]
@@ -365,36 +373,39 @@ def test(run, loader, model, criterion):
 
             ## Clone output to output vector
             probs[i] = Y_prob.detach()[:, 1].item()
-    mean_loss = running_loss / len(loader)
-    return probs.cpu().numpy(), mean_loss
+    mean_val_loss = running_loss / len(loader)
+    return mean_val_loss, probs.cpu().numpy()
 
 
-def train(run, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
+def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Set model in training mode
     model.train()
     # Initialize loss
     running_loss = 0.0
     # Loop through batches
-    for i, input in enumerate(loader):  #
+    for i, batch in enumerate(loader):
         ## Update weight decay and learning rate according to their schedule
-        it = len(loader) * (run - 1) + i  # global training iteration
+        it = len(loader) * (epoch - 1) + i  # global training iteration
         for j, param_group in enumerate(optimizer.param_groups):
             param_group["lr"] = lr_schedule[it]
             if j == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
 
-        target = input["target"].long().cuda()
+        target = batch["target"].long().to(device)
 
+        # Get features, reshape and copy to GPU
         if args.method in ["ViT_MIL", "DTMIL"]:
-            feat = input["feat_map"].float().permute(0, 3, 1, 2).cuda()
+            feat = batch["feat_map"].float().permute(0, 3, 1, 2)
         else:
-            ## Copy to GPU
-            feat = input["features"].squeeze(0).cuda()
+            feat = batch["features"].squeeze(0)
+        feat = feat.to(device)
 
-        ## Forward pass
+        # Forward pass
         if args.method == "GTP":
-            adj = input["adj_mtx"].float().cuda()
-            mask = input["mask"].float().cuda()
+            adj = batch["adj_mtx"].float().to(device)
+            mask = batch["mask"].float().to(device)
             results_dict = model(feat, adj, mask)
             logits = results_dict["logits"]
             mc1 = results_dict["mc1"]
@@ -404,8 +415,8 @@ def train(run, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             loss = loss + mc1 + o1
 
         elif args.method in ["PatchGCN", "DeepGraphConv"]:
-            edge_index = input["edge_index"].squeeze(0).cuda()
-            edge_latent = input["edge_latent"].squeeze(0).cuda()
+            edge_index = batch["edge_index"].squeeze(0).to(device)
+            edge_latent = batch["edge_latent"].squeeze(0).to(device)
             results_dict = model(
                 feat=feat, edge_index=edge_index, edge_latent=edge_latent
             )
@@ -414,7 +425,7 @@ def train(run, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             loss = criterion(logits, target)
 
         # elif args.method in ['DTMIL']:
-        #     mask = input['mask'].bool().cuda()
+        #     mask = input['mask'].bool().to(device)
         #     tensors = NestedTensor(feat, mask)
         #     results_dict = model(tensors)
 
@@ -424,13 +435,17 @@ def train(run, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             ## Calculate loss
             loss = criterion(logits, target)
 
-        ## Optimization step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        ## Store loss
         running_loss += loss.item()
-    return running_loss / len(loader)
+
+        # Optimization step with optional gradient accumulation
+        loss /= args.gradient_accumulation_steps
+        loss.backward()
+        if (i + 1) % args.gradient_accumulation_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+    
+    mean_train_loss = running_loss / len(loader)
+    return mean_train_loss
 
 
 def get_params_groups(model):
@@ -450,6 +465,11 @@ def get_params_groups(model):
 def cosine_scheduler(
     base_value, final_value, epochs, niter_per_ep, warmup_epochs=0, start_warmup_value=0
 ):
+    
+    assert (
+        warmup_epochs < epochs
+    ), f"Warmup epochs ({warmup_epochs}) must be less than total epochs ({epochs})."
+    
     warmup_schedule = np.array([])
     warmup_iters = warmup_epochs * niter_per_ep
     if warmup_epochs > 0:

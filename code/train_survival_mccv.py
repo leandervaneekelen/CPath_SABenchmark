@@ -341,8 +341,7 @@ def test(epoch, loader, model, criterion):
 
     # Loop through batches
     with torch.no_grad():
-        for i, batch in enumerate(loader):  #
-            ## Copy batch to GPU
+        for i, batch in enumerate(loader):
 
             # Get features, reshape and copy to GPU
             if args.method in ["ViT_MIL", "DTMIL"]:
@@ -417,7 +416,7 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
     risk_scores, labels = [], []
 
     # Loop through batches
-    for i, batch in enumerate(loader):  #
+    for i, batch in enumerate(loader):
         ## Update weight decay and learning rate according to their schedule
         it = len(loader) * (epoch - 1) + i  # global training iteration
         for j, param_group in enumerate(optimizer.param_groups):
@@ -503,10 +502,6 @@ def get_cumulative_dynamic_auc(train_data, test_data, test_risk_scores, verbose=
     survival_tune = np.array(
         list(zip(tune_tuples[:, 0], tune_tuples[:, 1])), dtype=np.dtype("bool,float")
     )
-
-    import ipdb
-
-    ipdb.set_trace()
 
     train_min, train_max = train_data["y"].min(), train_data["y"].max()
     test_min, test_max = test_data["y"].min(), test_data["y"].max()
