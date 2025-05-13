@@ -4,6 +4,7 @@ import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
 
+import os
 import pandas as pd
 import numpy as np
 import argparse
@@ -14,6 +15,7 @@ import wandb
 
 from sksurv.metrics import concordance_index_censored, cumulative_dynamic_auc
 from pathlib import Path
+from functools import partial
 
 # from aggregator import NestedTensor
 import survival_losses
@@ -78,9 +80,7 @@ parser.add_argument(
     choices=list(range(1, 22)),
     help="which seed (default: 1/20)",
 )
-parser.add_argument(
-    "--ndim", default=512, type=int, help="output dimension of feature extractor"
-)
+
 
 # OPTIMIZATION PARAMS
 parser.add_argument(
@@ -137,8 +137,8 @@ parser.add_argument(
 parser.add_argument("--random_seed", default=0, type=int, help="random seed")
 
 # Weight and Bias Config
-parser.add_argument("--wandb_project", type=str, help="name of project in wandb")
-parser.add_argument("--wandb_note", type=str, help="note of project in wandb")
+parser.add_argument("--wandb_project", type=str, default=None, help="name of project in wandb")
+parser.add_argument("--wandb_note", type=str, default=None, help="note of project in wandb")
 parser.add_argument(
     "--sweep_config", type=str, help="Path to the sweep configuration YAML file"
 )
@@ -172,59 +172,74 @@ def set_random_seed(seed_value):
         torch.backends.cudnn.benchmark = False  # If True, causes cuDNN to benchmark multiple convolution algorithms and select the fastest.
 
 
-def main(config=None):
+def main(config):
+
     # Initialize wandb
-    wandb.init(project=args.wandb_project, notes=args.wandb_note)
+    is_main_process = (__name__ == "__main__")
+    if is_main_process:
+        run = wandb.init(project=config.wandb_project, notes=config.wandb_note)
+    else:
+        run_name = f"{config.sweep_run_name}_fold{config.mccv}"
+        setattr(config, "output_name", run_name)
+        run = wandb.init(
+            group=config.sweep_id,
+            job_type=config.sweep_run_name,
+            name=run_name,
+            notes=config.wandb_note,
+            config=config,
+            reinit=True)
+        
+    # In case of hyperparameter tuning: do two-way sync between wandb config and local config
+    # (to facilitate hyperparameter tuning via external config files)
+    if config.sweep_config:
+        for key, value in run.config.items():
+            setattr(config, key, value)
 
-    if args.sweep_config:
-        for key, value in wandb.config.items():
-            if hasattr(args, key):
-                setattr(args, key, value)
-
-        args_dict = vars(args) if isinstance(args, argparse.Namespace) else args
-        for key, value in args_dict.items():
-            if key not in wandb.config:
-                wandb.config[key] = value
-
-        wandb.config.update(args_dict, allow_val_change=True)
+        arg_dict = vars(config) if isinstance(config, argparse.Namespace) else config
+        to_update = {}
+        for key, value in arg_dict.items():
+            if key not in run.config:
+                to_update[key] = value
+        run.config.update(to_update, allow_val_change=True)
 
     # Randomness
-    if args.random_seed is not None:
-        set_random_seed(args.random_seed)
+    if config.random_seed is not None:
+        set_random_seed(config.random_seed)
 
-    if not Path(args.output_dir).exists():
-        Path(args.output_dir).mkdir(parents=True)
+    if not Path(config.output_dir).exists():
+        Path(config.output_dir).mkdir(parents=True)
 
     # Set datasets
     train_dset, val_dset, test_dset = datasets.get_survival_datasets(
-        mccv=args.mccv,
-        data=args.data,
-        y_label=args.y_label,
-        encoder=args.encoder,
-        method=args.method,
+        mccv=config.mccv,
+        data=config.data,
+        y_label=config.y_label,
+        encoder=config.encoder,
+        method=config.method,
     )
     n_bins = train_dset.n_bins
     train_loader = torch.utils.data.DataLoader(
         train_dset,
-        batch_size=args.batch_size,
+        batch_size=config.batch_size,
         shuffle=True,
-        num_workers=args.workers,
-        worker_init_fn=lambda worker_id: np.random.seed(args.random_seed + worker_id),
-        generator=torch.Generator().manual_seed(args.random_seed),
+        num_workers=config.workers,
+        worker_init_fn=lambda worker_id: np.random.seed(config.random_seed + worker_id),
+        generator=torch.Generator().manual_seed(config.random_seed),
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dset, batch_size=1, shuffle=False, num_workers=args.workers
+        val_dset, batch_size=1, shuffle=False, num_workers=config.workers
     )
     test_loader = (
         torch.utils.data.DataLoader(
-            test_dset, batch_size=1, shuffle=False, num_workers=args.workers
+            test_dset, batch_size=1, shuffle=False, num_workers=config.workers
         )
         if test_dset is not None
         else None
     )
 
     # Get model
-    model = modules.get_aggregator(method=args.method, n_classes=n_bins, ndim=args.ndim)
+    config.ndim = DIMENSIONS_PER_EMBEDDER[config.encoder]
+    model = modules.get_aggregator(method=config.method, n_classes=n_bins, ndim=config.ndim)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
@@ -234,37 +249,38 @@ def main(config=None):
     # Set optimizer
     params_groups = get_params_groups(model)
     # optimizer = optim.AdamW(params_groups)
-    optimizer = optim.SGD(params_groups, momentum=args.momentum)
+    optimizer = optim.SGD(params_groups, momentum=config.momentum)
 
     # Set schedulers
     lr_schedule = cosine_scheduler(
-        args.lr,
-        args.lr_end,
-        args.nepochs,
+        config.lr,
+        config.lr_end,
+        config.nepochs,
         len(train_loader),
-        warmup_epochs=args.warmup_epochs,
+        warmup_epochs=config.warmup_epochs,
     )
     wd_schedule = cosine_scheduler(
-        args.weight_decay,
-        args.weight_decay_end,
-        args.nepochs,
+        config.weight_decay,
+        config.weight_decay_end,
+        config.nepochs,
         len(train_loader),
     )
     cudnn.benchmark = True
 
     best_cindex = 0.0
     # Main training loop
-    for epoch in range(args.nepochs + 1):
+    for epoch in range(config.nepochs + 1):
 
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            val_loss, val_cindex, _ = test(epoch, val_loader, model, criterion)
+            val_loss, val_cindex, _ = test(epoch, config, val_loader, model, criterion)
             # Log this epoch with a note
-            wandb.log({"epoch": epoch, "val_cindex": val_cindex, "val_loss": val_loss})
+            run.log({"epoch": epoch, "val_cindex": val_cindex, "val_loss": val_loss})
         else:
             # Regular training and validation logic
             train_loss, train_cindex = train(
                 epoch,
+                config,
                 train_loader,
                 model,
                 criterion,
@@ -273,17 +289,17 @@ def main(config=None):
                 wd_schedule,
             )
             val_loss, val_cindex, val_risk_scores = test(
-                epoch, val_loader, model, criterion
+                epoch, config, val_loader, model, criterion
             )
 
             _, mean_auc, _ = get_cumulative_dynamic_auc(
-                train_dset.df, val_dset.df, val_risk_scores, args.y_label
+                train_dset.df, val_dset.df, val_risk_scores, config.y_label
             )
 
             # Regular logging
             current_lr = optimizer.param_groups[0]["lr"]
             current_wd = optimizer.param_groups[0]["weight_decay"]
-            wandb.log(
+            run.log(
                 {
                     "epoch": epoch,
                     "train_loss": train_loss,
@@ -303,17 +319,17 @@ def main(config=None):
                 )
                 best_cindex = val_cindex
                 # Log this event to wandb
-                wandb.run.summary["best_c_index"] = val_cindex
-                wandb.run.summary["best_epoch"] = epoch
+                run.summary["best_c_index"] = val_cindex
+                run.summary["best_epoch"] = epoch
 
-    if args.data in ["camelyon16"] and test_loader != None:
-        _, test_cindex = test(epoch, test_loader, model, criterion)
+    if config.data in ["camelyon16"] and test_loader != None:
+        _, test_cindex = test(epoch, config, test_loader, model, criterion)
         # Log this epoch with a note
         wandb.log({"epoch": epoch, "test_c_index": test_cindex})
 
     # Model saving logic
-    if epoch == args.nepochs:  # only save the last model to artifact
-        model_filename = Path(args.output_dir) / f"{args.output_name}.pt"
+    if epoch == config.nepochs:  # only save the last model to artifact
+        model_filename = Path(config.output_dir) / f"{config.output_name}.pt"
         obj = {
             "epoch": epoch,
             "state_dict": model.state_dict(),
@@ -326,12 +342,13 @@ def main(config=None):
     # # Create a wandb Artifact and add the file to it
     # model_artifact = wandb.Artifact('final_model_checkpoint', type='model')
     # model_artifact.add_file(model_filename)
-    # wandb.log_artifact(model_artifact)
+    # run.log_artifact(model_artifact)
 
-    wandb.finish()
+    run.finish()
+    return val_cindex
 
 
-def test(epoch, loader, model, criterion):
+def test(epoch, config, loader, model, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model.eval()
@@ -344,7 +361,7 @@ def test(epoch, loader, model, criterion):
         for i, batch in enumerate(loader):
 
             # Get features, reshape and copy to GPU
-            if args.method in ["ViT_MIL", "DTMIL"]:
+            if config.method in ["ViT_MIL", "DTMIL"]:
                 feat = batch["feat_map"].float().permute(0, 3, 1, 2)
             else:
                 feat = batch["features"].squeeze(0)
@@ -359,17 +376,17 @@ def test(epoch, loader, model, criterion):
             discrete_labels, censored = discrete_labels.to(device), censored.to(device)
 
             # Forward pass
-            if args.method in ["GTP"]:
+            if config.method in ["GTP"]:
                 adj = batch["adj_mtx"].float().to(device)
                 mask = batch["mask"].float().to(device)
                 results_dict = model(feat, adj, mask)
-            elif args.method in ["PatchGCN", "DeepGraphConv"]:
+            elif config.method in ["PatchGCN", "DeepGraphConv"]:
                 edge_index = batch["edge_index"].squeeze(0).to(device)
                 edge_latent = batch["edge_latent"].squeeze(0).to(device)
                 results_dict = model(
                     feat=feat, edge_index=edge_index, edge_latent=edge_latent
                 )
-            # elif args.method in ['DTMIL']:
+            # elif config.method in ['DTMIL']:
             #     mask = input['mask'].bool().to(device)
             #     tensors = NestedTensor(feat, mask)
             #     results_dict = model(tensors)
@@ -408,7 +425,7 @@ def test(epoch, loader, model, criterion):
     return mean_val_loss, c_index, risk_scores
 
 
-def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
+def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.train()
     running_loss = 0.0
@@ -425,7 +442,7 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
                 param_group["weight_decay"] = wd_schedule[it]
 
         # Get features, reshape and copy to GPU
-        if args.method in ["ViT_MIL", "DTMIL"]:
+        if config.method in ["ViT_MIL", "DTMIL"]:
             feat = batch["feat_map"].float().permute(0, 3, 1, 2)
         else:
             feat = batch["features"].squeeze(0)
@@ -440,17 +457,17 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
         discrete_labels, censored = discrete_labels.to(device), censored.to(device)
 
         # Forward pass
-        if args.method == "GTP":
+        if config.method == "GTP":
             adj = batch["adj_mtx"].float().to(device)
             mask = batch["mask"].float().to(device)
             results_dict = model(feat, adj, mask)
-        elif args.method in ["PatchGCN", "DeepGraphConv"]:
+        elif config.method in ["PatchGCN", "DeepGraphConv"]:
             edge_index = batch["edge_index"].squeeze(0).to(device)
             edge_latent = batch["edge_latent"].squeeze(0).to(device)
             results_dict = model(
                 feat=feat, edge_index=edge_index, edge_latent=edge_latent
             )
-        # elif args.method in ['DTMIL']:
+        # elif config.method in ['DTMIL']:
         #     mask = input['mask'].bool().to(device)
         #     tensors = NestedTensor(feat, mask)
         #     results_dict = model(tensors)
@@ -476,9 +493,9 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
         times_to_events.extend(time_to_events.clone().tolist())
 
         # Optimization step with optional gradient accumulation
-        loss /= args.gradient_accumulation_steps
+        loss /= config.gradient_accumulation_steps
         loss.backward()
-        if (i + 1) % args.gradient_accumulation_steps == 0:
+        if (i + 1) % config.gradient_accumulation_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
 
@@ -672,10 +689,6 @@ def update_args_with_selected_hyperparameters(args):
 if __name__ == "__main__":
     args = parser.parse_args()
 
-    # Dim of features
-    if args.encoder in DIMENSIONS_PER_EMBEDDER:
-        args.ndim = DIMENSIONS_PER_EMBEDDER[args.encoder]
-
     # Update args with hyperparameters based on the file extension of parameter_path
     if args.parameter_path:
         if args.parameter_path.endswith(".csv"):
@@ -698,7 +711,7 @@ if __name__ == "__main__":
         # Initialize the sweep
         sweep_id = wandb.sweep(sweep_config, project=args.wandb_project)
 
-        wandb.agent(sweep_id, function=lambda: main())
+        wandb.agent(sweep_id, function=partial(main, args))
 
     else:
         print("args:", args)
