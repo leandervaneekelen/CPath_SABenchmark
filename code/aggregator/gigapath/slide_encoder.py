@@ -22,7 +22,7 @@ import torch.nn as nn
 import numpy as np
 
 import timm
-from timm.models.registry import register_model
+from timm.models import register_model
 import huggingface_hub
 
 from .pos_embed import get_2d_sincos_pos_embed
