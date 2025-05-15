@@ -222,7 +222,9 @@ def main(config=None):
     )
 
     # Get model
-    model = modules.get_aggregator(method=args.method, ndim=args.ndim, n_classes=2) # TODO: make `n_classes` dynamic 
+    model = modules.get_aggregator(
+        method=args.method, ndim=args.ndim, n_classes=2
+    )  # TODO: make `n_classes` dynamic
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
@@ -443,7 +445,7 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
         if (i + 1) % args.gradient_accumulation_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
-    
+
     mean_train_loss = running_loss / len(loader)
     return mean_train_loss
 
@@ -465,11 +467,11 @@ def get_params_groups(model):
 def cosine_scheduler(
     base_value, final_value, epochs, niter_per_ep, warmup_epochs=0, start_warmup_value=0
 ):
-    
+
     assert (
         warmup_epochs < epochs
     ), f"Warmup epochs ({warmup_epochs}) must be less than total epochs ({epochs})."
-    
+
     warmup_schedule = np.array([])
     warmup_iters = warmup_epochs * niter_per_ep
     if warmup_epochs > 0:

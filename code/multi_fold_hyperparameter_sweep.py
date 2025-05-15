@@ -83,6 +83,7 @@ def parse_args():
 
     return parser.parse_args()
 
+
 def reset_wandb_env():
     exclude = {
         "WANDB_PROJECT",
@@ -93,6 +94,7 @@ def reset_wandb_env():
         if key.startswith("WANDB_") and key not in exclude:
             del os.environ[key]
 
+
 def multi_fold_train(args):
 
     # Start new wandb sweep run to save the aggregated metrics to
@@ -100,7 +102,7 @@ def multi_fold_train(args):
     sweep_id = sweep_run.sweep_id or "unknown"
     sweep_url = sweep_run.get_sweep_url()
     project_url = sweep_run.get_project_url()
-    sweep_group_url = f'{project_url}/groups/{sweep_id}'
+    sweep_group_url = f"{project_url}/groups/{sweep_id}"
     sweep_run.notes = sweep_group_url
     sweep_run.save()
     sweep_run_name = sweep_run.name or sweep_run.id or "unknown_2"
@@ -112,8 +114,7 @@ def multi_fold_train(args):
     train = train_classification if args.task == "classification" else train_survival
 
     # Do training run for each fold
-    # folds = [1, 2, 3, 4, 5]
-    folds = [1, 2] # Debugging purposes, remove later
+    folds = [1, 2, 3, 4, 5]
     evaluation_metrics = []
     for fold in folds:
 
@@ -138,15 +139,18 @@ def multi_fold_train(args):
     sweep_run.log({"avg_eval_metric": avg_eval_metric})
     sweep_run.finish()
 
+
 def main(args):
     with open(args.sweep_config, "r") as f:
         sweep_config = yaml.safe_load(f)
 
     # Needed for proper error handling
     func = partial(multi_fold_train, args)
+
     def run_with_exception_logging():
         import sys
         import traceback
+
         try:
             func()
         except Exception as e:
@@ -161,6 +165,7 @@ def main(args):
     )
     wandb.finish()
 
+
 if __name__ == "__main__":
-        args = parse_args()
-        main(args)
+    args = parse_args()
+    main(args)

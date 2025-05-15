@@ -137,8 +137,12 @@ parser.add_argument(
 parser.add_argument("--random_seed", default=0, type=int, help="random seed")
 
 # Weight and Bias Config
-parser.add_argument("--wandb_project", type=str, default=None, help="name of project in wandb")
-parser.add_argument("--wandb_note", type=str, default=None, help="note of project in wandb")
+parser.add_argument(
+    "--wandb_project", type=str, default=None, help="name of project in wandb"
+)
+parser.add_argument(
+    "--wandb_note", type=str, default=None, help="note of project in wandb"
+)
 parser.add_argument(
     "--sweep_config", type=str, help="Path to the sweep configuration YAML file"
 )
@@ -175,7 +179,7 @@ def set_random_seed(seed_value):
 def main(config):
 
     # Initialize wandb
-    is_main_process = (__name__ == "__main__")
+    is_main_process = __name__ == "__main__"
     if is_main_process:
         run = wandb.init(project=config.wandb_project, notes=config.wandb_note)
     else:
@@ -187,8 +191,9 @@ def main(config):
             name=run_name,
             notes=config.wandb_note,
             config=config,
-            reinit=True)
-        
+            reinit=True,
+        )
+
     # In case of hyperparameter tuning: do two-way sync between wandb config and local config
     # (to facilitate hyperparameter tuning via external config files)
     if config.sweep_config:
@@ -239,7 +244,9 @@ def main(config):
 
     # Get model
     config.ndim = DIMENSIONS_PER_EMBEDDER[config.encoder]
-    model = modules.get_aggregator(method=config.method, n_classes=n_bins, ndim=config.ndim)
+    model = modules.get_aggregator(
+        method=config.method, n_classes=n_bins, ndim=config.ndim
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
