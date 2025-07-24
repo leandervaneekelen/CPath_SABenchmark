@@ -3,19 +3,16 @@ import torch
 import numpy as np
 
 
-def get_survival_datasets(mccv, data, y_label, encoder, method):
-    df = pd.read_csv(data)
-    columns = [encoder, y_label, "discrete_label", "censored"]
-    df_train = (
-        df.loc[df[f"mccv{mccv}"] == "train", columns]
-        .reset_index(drop=True)
-        .rename(columns={y_label: "y"})
+def get_survival_datasets(mccv, data, y_label, encoder, method, tile_index=None):
+    df = pd.read_csv(data).rename(
+        columns={encoder: "encoder", y_label: "y", tile_index: "tile_index_path"}
     )
-    df_val = (
-        df.loc[df[f"mccv{mccv}"] == "val", columns]
-        .reset_index(drop=True)
-        .rename(columns={y_label: "y"})
-    )
+    columns = ["encoder", "y", "discrete_label", "censored"]
+    if tile_index is not None:
+        columns.append("tile_index_path")
+
+    df_train = df.loc[df[f"mccv{mccv}"] == "train", columns].reset_index(drop=True)
+    df_val = df.loc[df[f"mccv{mccv}"] == "val", columns].reset_index(drop=True)
     df_test = None
 
     if method in [
@@ -53,13 +50,22 @@ class slide_dataset_survival(torch.utils.data.Dataset):
         return len(self.df)
 
     def __getitem__(self, index):
-        path_to_data, time_to_event, discrete_label, censored = self.df.iloc[index]
+        row = self.df.iloc[index]
+        path_to_data = row["encoder"]
+        time_to_event = row["y"]
+        discrete_label = row["discrete_label"]
+        censored = row["censored"]
 
         data = np.load(path_to_data)  # feature matrix and possibly other data
         try:
             feat = data["features"]
         except:
             feat = data
+
+        if "tile_index" in row.keys():
+            tile_index = np.load(row["tile_index"])
+            feat = feat[tile_index]
+
         return {
             "features": feat,
             "discrete_label": discrete_label,
@@ -91,19 +97,23 @@ class slide_dataset_survival_graph(slide_dataset_survival):
         return item
 
 
-def get_classification_datasets(mccv, data, y_label, encoder, method):
+def get_classification_datasets(mccv, data, y_label, encoder, method, tile_index=None):
     df = pd.read_csv(data)
+    columns = [encoder, y_label]
+    if tile_index is not None:
+        columns.append(tile_index)
+    rename = {encoder: "encoder", y_label: "y", tile_index: "tile_index"}
     df_train = (
-        df.loc[df[f"mccv{mccv}_{y_label}"] == "train", [encoder, y_label]]
+        df.loc[df[f"mccv{mccv}_{y_label}"] == "train", columns]
         .reset_index(drop=True)
         .dropna()
-        .rename(columns={y_label: "y"})
+        .rename(rename)
     )
     df_val = (
-        df.loc[df[f"mccv{mccv}_{y_label}"] == "val", [encoder, y_label]]
+        df.loc[df[f"mccv{mccv}_{y_label}"] == "val", columns]
         .reset_index(drop=True)
         .dropna()
-        .rename(columns={y_label: "y"})
+        .rename(rename)
     )
     df_test = None
 
@@ -143,12 +153,18 @@ class slide_dataset_classification(torch.utils.data.Dataset):
         return len(self.df)
 
     def __getitem__(self, index):
-        path_to_data, label = self.df.iloc[index]
+        row = self.df.iloc[index]
+        path_to_data = row["encoder"]
+        label = row["y"]
         data = np.load(path_to_data)  # feature matrix and possibly other data
         try:
             feat = data["features"]
         except:
             feat = data
+
+        if "tile_index" in row.keys():
+            tile_index = np.load(row["tile_index"])
+            feat = feat[tile_index]
         return {"features": feat, "target": label}
 
 

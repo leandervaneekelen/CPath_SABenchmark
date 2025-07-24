@@ -72,6 +72,9 @@ parser.add_argument(
     choices=DIMENSIONS_PER_EMBEDDER.keys(),
     help="which encoder to use",
 )
+parser.add_argument(
+    "--tile_index", type=str, default=None, help="tile index column name"
+)
 
 parser.add_argument(
     "--mccv",
@@ -221,6 +224,7 @@ def main(config):
         y_label=config.y_label,
         encoder=config.encoder,
         method=config.method,
+        tile_index=config.tile_index,
     )
     n_bins = train_dset.n_bins
     train_loader = torch.utils.data.DataLoader(
