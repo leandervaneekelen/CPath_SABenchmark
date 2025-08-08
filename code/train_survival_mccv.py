@@ -18,10 +18,10 @@ from pathlib import Path
 from functools import partial
 
 # from aggregator import NestedTensor
-import survival_losses
 import datasets
 import modules
 from constants import DIMENSIONS_PER_EMBEDDER
+from survival_losses import LossFactory
 
 parser = argparse.ArgumentParser()
 
@@ -109,6 +109,13 @@ parser.add_argument(
     type=float,
     default=1e-6,
     help="""Target LR at the end of optimization. We use a cosine LR schedule with linear warmup.""",
+)
+parser.add_argument(
+    "--loss",
+    type=str,
+    default="nll",
+    choices=["nll", "cox"],
+    help="""Loss function to use. 'nll' is the negative log-likelihood loss, and 'cox' is the Cox proportional hazards loss.""",
 )
 parser.add_argument(
     "--warmup_epochs",
@@ -255,7 +262,7 @@ def main(config):
     model.to(device)
 
     # Set loss
-    criterion = survival_losses.NLLSurvLoss(alpha=0.15)
+    criterion = LossFactory(loss=config.loss, alpha=0.4).get_loss()
 
     # Set optimizer
     params_groups = get_params_groups(model)
@@ -493,7 +500,11 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
         # Calculate loss
         mc1 = results_dict.get("mc1", 0.0)  # Optional aux loss from GTP
         o1 = results_dict.get("o1", 0.0)  # Optional aux loss from GTP
-        loss = criterion(hazards, surv, discrete_labels, censored) + mc1 + o1
+        loss = (
+            criterion(hazards=hazards, survival=surv, Y=discrete_labels, c=censored)
+            + mc1
+            + o1
+        )
         running_loss += loss.item()
 
         # Calculate risk scores
