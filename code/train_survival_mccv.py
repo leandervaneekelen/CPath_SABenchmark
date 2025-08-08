@@ -185,6 +185,24 @@ def set_random_seed(seed_value):
         torch.backends.cudnn.benchmark = False  # If True, causes cuDNN to benchmark multiple convolution algorithms and select the fastest.
 
 
+def collate_survival(batch):
+    """
+    Collation function for slide_dataset_survival.
+    Groups features into a list and stacks other elements into tensors.
+    """
+    features = [torch.Tensor(item["features"]) for item in batch]
+    discrete_labels = torch.tensor([item["discrete_label"] for item in batch])
+    time_to_events = torch.tensor([item["time_to_event"] for item in batch])
+    censored = torch.tensor([bool(item["censored"]) for item in batch])
+
+    return {
+        "features": features,
+        "discrete_label": discrete_labels,
+        "time_to_event": time_to_events,
+        "censored": censored,
+    }
+
+
 def main(config):
 
     # Initialize wandb
@@ -232,21 +250,31 @@ def main(config):
         method=config.method,
         tile_index=config.tile_index,
     )
-    n_bins = train_dset.n_bins
+    n_bins = 1 if config.loss == "cox" else train_dset.n_bins
+    collate_fn = collate_survival if config.batch_size > 1 else None
     train_loader = torch.utils.data.DataLoader(
         train_dset,
         batch_size=config.batch_size,
+        collate_fn=collate_fn,
         shuffle=True,
         num_workers=config.workers,
         worker_init_fn=lambda worker_id: np.random.seed(config.random_seed + worker_id),
         generator=torch.Generator().manual_seed(config.random_seed),
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dset, batch_size=1, shuffle=False, num_workers=config.workers
+        val_dset,
+        batch_size=config.batch_size,
+        collate_fn=collate_fn,
+        shuffle=False,
+        num_workers=config.workers,
     )
     test_loader = (
         torch.utils.data.DataLoader(
-            test_dset, batch_size=1, shuffle=False, num_workers=config.workers
+            test_dset,
+            batch_size=config.batch_size,
+            collate_fn=collate_fn,
+            shuffle=False,
+            num_workers=config.workers,
         )
         if test_dset is not None
         else None
@@ -380,9 +408,15 @@ def test(epoch, config, loader, model, criterion):
             # Get features, reshape and copy to GPU
             if config.method in ["ViT_MIL", "DTMIL"]:
                 feat = batch["feat_map"].float().permute(0, 3, 1, 2)
+                feat = feat.to(device)
             else:
-                feat = batch["features"].squeeze(0)
-            feat = feat.to(device)
+                feat = batch["features"]
+                if config.batch_size == 1:
+                    feat = feat.squeeze(0)
+                if isinstance(feat, list):
+                    feat = [f.to(device) for f in feat]
+                else:
+                    feat = feat.to(device)
 
             # Get targets
             discrete_labels, time_to_events, censored = (
@@ -419,7 +453,13 @@ def test(epoch, config, loader, model, criterion):
             mc1 = results_dict.get("mc1", 0.0)  # Optional aux loss from GTP
             o1 = results_dict.get("o1", 0.0)  # Optional aux loss from GTP
             loss = (
-                criterion(hazards, surv, discrete_labels, censored, alpha=0.0)
+                criterion(
+                    hazards=hazards,
+                    survival=surv,
+                    Y=discrete_labels,
+                    c=censored,
+                    alpha=0.0,
+                )
                 + mc1
                 + o1
             )
@@ -438,7 +478,7 @@ def test(epoch, config, loader, model, criterion):
     )[0]
 
     # Return metrics & risk scores
-    mean_val_loss = running_loss / len(loader)
+    mean_val_loss = running_loss / len(loader.dataset)
     return mean_val_loss, c_index, risk_scores
 
 
@@ -461,9 +501,15 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
         # Get features, reshape and copy to GPU
         if config.method in ["ViT_MIL", "DTMIL"]:
             feat = batch["feat_map"].float().permute(0, 3, 1, 2)
+            feat = feat.to(device)
         else:
-            feat = batch["features"].squeeze(0)
-        feat = feat.to(device)
+            feat = batch["features"]
+            if config.batch_size == 1:
+                feat = feat.squeeze(0)
+            if isinstance(feat, list):
+                feat = [f.to(device) for f in feat]
+            else:
+                feat = feat.to(device)
 
         # Get targets
         discrete_labels, time_to_events, censored = (
@@ -525,8 +571,7 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
         [bool(1 - c) for c in censoring], times_to_events, risk_scores
     )[0]
 
-    # Return metrics
-    mean_train_loss = running_loss / len(loader)
+    mean_train_loss = running_loss / len(loader.dataset)
     return mean_train_loss, c_index
 
 

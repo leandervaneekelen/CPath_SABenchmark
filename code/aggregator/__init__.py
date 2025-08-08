@@ -1,4 +1,5 @@
 from .gma import GMA
+from .loop_abmil import LoopABMIL
 from .transmil import TransMIL
 from .CLAM import CLAM_SB, CLAM_MB
 from .varmil import VarAttention

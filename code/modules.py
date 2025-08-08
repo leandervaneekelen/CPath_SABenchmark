@@ -5,6 +5,7 @@ import torch
 # Import aggregation methods
 from aggregator import (
     GMA,
+    LoopABMIL,
     TransMIL,
     DSMIL,
     CLAM_SB,
@@ -34,6 +35,10 @@ def get_aggregator(method, n_classes, ndim=1024, **kwargs):
         return MIL_Attention_FC_surv(
             ndim=ndim, n_classes=n_classes, size_arg="big", **kwargs
         )
+    elif method == "LoopABMIL":
+        return LoopABMIL(
+            input_dim=ndim, hidden_dim=512, output_dim=n_classes, **kwargs
+        )  # TODO: hidden dim may be chosen better
     # DeepSMILE
     elif method == "VarMIL":
         return VarAttention(n_classes=n_classes, ndim=ndim, **kwargs)
