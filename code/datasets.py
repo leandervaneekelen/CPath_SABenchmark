@@ -3,7 +3,7 @@ import torch
 import numpy as np
 
 
-def get_survival_datasets(mccv, data, y_label, encoder, method, tile_index=None):
+def get_survival_datasets(fold, data, y_label, encoder, method, tile_index=None):
     df = pd.read_csv(data).rename(
         columns={encoder: "encoder", y_label: "y", tile_index: "tile_index_path"}
     )
@@ -11,8 +11,8 @@ def get_survival_datasets(mccv, data, y_label, encoder, method, tile_index=None)
     if tile_index is not None:
         columns.append("tile_index_path")
 
-    df_train = df.loc[df[f"mccv{mccv}"] == "train", columns].reset_index(drop=True)
-    df_val = df.loc[df[f"mccv{mccv}"] == "val", columns].reset_index(drop=True)
+    df_train = df.loc[df[fold] == "train", columns].reset_index(drop=True)
+    df_val = df.loc[df[fold] == "val", columns].reset_index(drop=True)
     df_test = None
 
     if method in [
@@ -97,20 +97,20 @@ class slide_dataset_survival_graph(slide_dataset_survival):
         return item
 
 
-def get_classification_datasets(mccv, data, y_label, encoder, method, tile_index=None):
+def get_classification_datasets(fold, data, y_label, encoder, method, tile_index=None):
     df = pd.read_csv(data)
     columns = [encoder, y_label]
     if tile_index is not None:
         columns.append(tile_index)
     rename = {encoder: "encoder", y_label: "y", tile_index: "tile_index"}
     df_train = (
-        df.loc[df[f"mccv{mccv}_{y_label}"] == "train", columns]
+        df.loc[df[f"{fold}_{y_label}"] == "train", columns]
         .reset_index(drop=True)
         .dropna()
         .rename(rename)
     )
     df_val = (
-        df.loc[df[f"mccv{mccv}_{y_label}"] == "val", columns]
+        df.loc[df[f"{fold}_{y_label}"] == "val", columns]
         .reset_index(drop=True)
         .dropna()
         .rename(rename)

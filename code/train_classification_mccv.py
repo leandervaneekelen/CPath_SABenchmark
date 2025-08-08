@@ -71,11 +71,10 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--mccv",
+    "--fold",
     default=1,
-    type=int,
-    choices=list(range(1, 22)),
-    help="which seed (default: 1/20)",
+    type=str,
+    help="which fold to use; column name in data csv",
 )
 parser.add_argument(
     "--ndim", default=512, type=int, help="output dimension of feature extractor"
@@ -196,7 +195,7 @@ def main(config=None):
 
     # Set datasets
     train_dset, val_dset, test_dset = datasets.get_classification_datasets(
-        mccv=args.mccv,
+        fold=args.fold,
         data=args.data,
         y_label=args.y_label,
         encoder=args.encoder,

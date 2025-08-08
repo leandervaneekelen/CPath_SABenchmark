@@ -77,11 +77,10 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--mccv",
+    "--fold",
     default=1,
-    type=int,
-    choices=list(range(1, 22)),
-    help="which seed (default: 1/20)",
+    type=str,
+    help="which fold to use; column name in data csv",
 )
 
 
@@ -193,7 +192,7 @@ def main(config):
     if is_main_process:
         run = wandb.init(project=config.wandb_project, notes=config.wandb_note)
     else:
-        run_name = f"{config.sweep_run_name}_fold{config.mccv}"
+        run_name = f"{config.sweep_run_name}_fold{config.fold}"
         setattr(config, "output_name", run_name)
         run = wandb.init(
             group=config.sweep_id,
@@ -226,7 +225,7 @@ def main(config):
 
     # Set datasets
     train_dset, val_dset, test_dset = datasets.get_survival_datasets(
-        mccv=config.mccv,
+        fold=config.fold,
         data=config.data,
         y_label=config.y_label,
         encoder=config.encoder,

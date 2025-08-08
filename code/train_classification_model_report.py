@@ -71,11 +71,10 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--mccv",
+    "--fold",
     default=1,
-    type=int,
-    choices=list(range(1, 22)),
-    help="which seed (default: 1/20)",
+    type=str,
+    help="which fold to use; column name in data csv",
 )
 parser.add_argument(
     "--ndim", default=512, type=int, help="output dimension of feature extractor"
@@ -192,7 +191,7 @@ def main(config=None):
 
     # Set datasets
     train_dset, val_dset = datasets.get_classification_datasets(
-        mccv=args.mccv, data=args.data, encoder=args.encoder, method=args.method
+        fold=args.fold, data=args.data, encoder=args.encoder, method=args.method
     )
     train_loader = torch.utils.data.DataLoader(
         train_dset, batch_size=1, shuffle=True, num_workers=args.workers

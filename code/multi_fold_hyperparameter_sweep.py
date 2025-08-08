@@ -129,7 +129,8 @@ def multi_fold_train(args):
             setattr(args, key, value)
 
         # Train on fold
-        setattr(args, "mccv", fold)
+        setattr(args, "fold", fold)
+        setattr(args, "random_seed", fold)
         eval_metric = train(args)
         evaluation_metrics.append(eval_metric)
 
