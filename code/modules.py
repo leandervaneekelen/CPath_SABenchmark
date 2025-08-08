@@ -20,7 +20,21 @@ from aggregator import (
     PureTransformer,
 )
 
-# PureTransformer, DTMIL
+AGGREGATION_METHODS = [
+    "AB-MIL",
+    "AB-MIL_FC_small",
+    "AB-MIL_FC_big",
+    "LoopABMIL",
+    "VarMIL",
+    "CLAM_SB",
+    "CLAM_MB",
+    "ViT_MIL",
+    "transMIL",
+    "DS-MIL",
+    "GTP",
+    "PatchGCN",
+    "DeepGraphConv",
+]
 
 
 def get_aggregator(method, n_classes, ndim=1024, **kwargs):

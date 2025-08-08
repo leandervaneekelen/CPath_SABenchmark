@@ -31,29 +31,10 @@ def parse_args():
         choices=["classification", "survival"],
     )
     parser.add_argument(
-        "--max_runs", type=int, default=1, help="number of random hyperparameter runs"
-    )
-    parser.add_argument(
-        "--method",
-        type=str,
-        default="",
-        choices=[
-            "AB-MIL",
-            "AB-MIL_FC_small",
-            "AB-MIL_FC_big",
-            "CLAM_SB",
-            "CLAM_MB",
-            "transMIL",
-            "DS-MIL",
-            "VarMIL",
-            "GTP",
-            "PatchGCN",
-            "DeepGraphConv",
-            "ViT_MIL",
-            "DTMIL",
-            "LongNet_ViT",
-        ],
-        help="which aggregation method to use",
+        "--max_runs",
+        type=int,
+        default=None,
+        help="number of random hyperparameter runs",
     )
     parser.add_argument("--data", type=str, default="", help="Path to dataset in excel")
     parser.add_argument(
@@ -62,17 +43,6 @@ def parse_args():
         default="y_1year",
         help="Column name of y_labels in dataset sheet",
     )
-    parser.add_argument(
-        "--encoder",
-        type=str,
-        default="",
-        choices=DIMENSIONS_PER_EMBEDDER.keys(),
-        help="which encoder to use",
-    )
-    parser.add_argument(
-        "--nepochs", type=int, default=40, help="number of epochs (default: 40)"
-    )
-    parser.add_argument("--random_seed", default=0, type=int, help="random seed")
 
     # Weight and Bias Config
     parser.add_argument("--wandb_project", type=str, help="name of project in wandb")

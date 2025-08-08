@@ -40,22 +40,7 @@ parser.add_argument(
     "--method",
     type=str,
     default="",
-    choices=[
-        "AB-MIL",
-        "AB-MIL_FC_small",
-        "AB-MIL_FC_big",
-        "CLAM_SB",
-        "CLAM_MB",
-        "transMIL",
-        "DS-MIL",
-        "VarMIL",
-        "GTP",
-        "PatchGCN",
-        "DeepGraphConv",
-        "ViT_MIL",
-        "DTMIL",
-        "LongNet_ViT",
-    ],
+    choices=modules.AGGREGATION_METHODS,
     help="which aggregation method to use",
 )
 parser.add_argument("--data", type=str, default="", help="Path to dataset in excel")
@@ -143,7 +128,7 @@ parser.add_argument(
     type=int,
     help="number of data loading workers (default: 10)",
 )
-parser.add_argument("--random_seed", default=0, type=int, help="random seed")
+parser.add_argument("--random_seed", default=None, type=int, help="random seed")
 
 # Weight and Bias Config
 parser.add_argument(
@@ -208,7 +193,7 @@ def main(config):
     # Initialize wandb
     is_main_process = __name__ == "__main__"
     if is_main_process:
-        run = wandb.init(project=config.wandb_project, notes=config.wandb_note)
+        run = wandb.init(project=config.wandb_project, notes=config.wandb_note, config=config)
     else:
         run_name = f"{config.sweep_run_name}_fold{config.fold}"
         setattr(config, "output_name", run_name)
@@ -220,7 +205,7 @@ def main(config):
             config=config,
             reinit=True,
         )
-
+ 
     # In case of hyperparameter tuning: do two-way sync between wandb config and local config
     # (to facilitate hyperparameter tuning via external config files)
     if config.sweep_config:
@@ -360,7 +345,7 @@ def main(config):
             # Check if the current model is the best one
             if val_cindex > best_cindex:
                 print(
-                    f"New best model found at epoch {epoch} with C-index: {val_cindex}"
+                    f"New best model found at epoch {epoch} with (validation) C-index: {val_cindex}"
                 )
                 best_cindex = val_cindex
                 # Log this event to wandb
