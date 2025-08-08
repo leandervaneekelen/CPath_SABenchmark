@@ -1,3 +1,7 @@
+"""
+All hyperparameter domains should be defined in the sweep_config.yaml file (e.g. 'batch_size' or 'encoder'), even if they are not part of the sweep and remain constant.
+"""
+
 import wandb
 import argparse
 import yaml
@@ -5,9 +9,8 @@ import numpy as np
 import os
 from functools import partial
 
-from train_classification_mccv import main as train_classification
-from train_survival_mccv import main as train_survival
-from constants import DIMENSIONS_PER_EMBEDDER
+from code.train_classification import main as train_classification
+from code.train_survival import main as train_survival
 
 
 def parse_args():

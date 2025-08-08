@@ -278,8 +278,8 @@ def main(config):
 
     # Set optimizer
     params_groups = get_params_groups(model)
-    # optimizer = optim.AdamW(params_groups)
-    optimizer = optim.SGD(params_groups, momentum=config.momentum)
+    optimizer = optim.AdamW(params_groups)
+    # optimizer = optim.SGD(params_groups, momentum=config.momentum)
 
     # Set schedulers
     lr_schedule = cosine_scheduler(
@@ -322,9 +322,9 @@ def main(config):
                 epoch, config, val_loader, model, criterion
             )
 
-            _, mean_auc, _ = get_cumulative_dynamic_auc(
-                train_dset.df, val_dset.df, val_risk_scores, config.y_label
-            )
+            # _, mean_auc, _ = get_cumulative_dynamic_auc(
+            #     train_dset.df, val_dset.df, val_risk_scores, config.y_label
+            # )
 
             # Regular logging
             current_lr = optimizer.param_groups[0]["lr"]
@@ -336,7 +336,7 @@ def main(config):
                     "val_loss": val_loss,
                     "train_cindex": train_cindex,
                     "val_cindex": val_cindex,
-                    "val_mean_cumulative_auc": mean_auc,
+                    # "val_mean_cumulative_auc": mean_auc,
                     "lr_step": current_lr,
                     "wd_step": current_wd,
                 }
