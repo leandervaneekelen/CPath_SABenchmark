@@ -260,13 +260,13 @@ def main(config=None):
 
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            probs, val_loss = test(epoch, val_loader, model, criterion)
-            val_auc = roc_auc_score(val_loader.dataset.df.y, probs)
+            val_targets, val_probs, val_loss = test(epoch, val_loader, model, criterion)
+            val_auc = roc_auc_score(val_targets, val_probs)
             # Log this epoch with a note
             wandb.log({"epoch": epoch, "val_auc": val_auc, "val_loss": val_loss})
         else:
             # Regular training and validation logic
-            train_loss = train(
+            train_targets, train_probs, train_loss = train(
                 epoch,
                 train_loader,
                 model,
@@ -275,17 +275,21 @@ def main(config=None):
                 lr_schedule,
                 wd_schedule,
             )
+            train_auc = roc_auc_score(train_targets, train_probs)
+            val_targets, val_probs, val_loss = test(epoch, val_loader, model, criterion)
+            val_auc = roc_auc_score(val_targets, val_probs)
+
             # Get the current learning rate from the first parameter group
             current_lr = optimizer.param_groups[0]["lr"]
             current_wd = optimizer.param_groups[0]["weight_decay"]
-            probs, val_loss = test(epoch, val_loader, model, criterion)
-            val_auc = roc_auc_score(val_loader.dataset.df.y, probs)
-            # Regular AUC logging
+
+            # Logging
             wandb.log(
                 {
                     "epoch": epoch,
                     "train_loss": train_loss,
                     "val_loss": val_loss,
+                    "train_auc": train_auc,
                     "val_auc": val_auc,
                     "lr_step": current_lr,
                     "wd_step": current_wd,
@@ -363,7 +367,7 @@ def test(epoch, loader, model, criterion):
     model.eval()
     # Initialize loss
     running_loss = 0.0
-    # Initialize probability vector
+    targets = torch.LongTensor(len(loader)).to(device)
     probs = torch.FloatTensor(len(loader)).to(device)
     # Loop through batches
     with torch.no_grad():
@@ -385,9 +389,11 @@ def test(epoch, loader, model, criterion):
             running_loss += loss.item()
 
             ## Clone output to output vector
+            targets[i] = target.item()
             probs[i] = Y_prob.detach()[:, 1].item()
     mean_val_loss = running_loss / len(loader)
     return (
+        targets.cpu().numpy(),
         probs.cpu().numpy(),
         mean_val_loss,
     )
@@ -400,6 +406,8 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
     model.train()
     # Initialize loss
     running_loss = 0.0
+    targets = torch.LongTensor(len(loader)).to(device)
+    probs = torch.FloatTensor(len(loader)).to(device)
     # Loop through batches
     for i, batch in enumerate(loader):
         ## Update weight decay and learning rate according to their schedule
@@ -423,6 +431,10 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             loss = loss + mc1 + o1
         running_loss += loss.item()
 
+        ## Clone output to output vector
+        targets[i] = target.item()
+        probs[i] = Y_prob.detach()[:, 1].item()
+
         # Optimization step with optional gradient accumulation
         loss /= args.gradient_accumulation_steps
         loss.backward()
@@ -431,7 +443,7 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             optimizer.zero_grad()
 
     mean_train_loss = running_loss / len(loader)
-    return mean_train_loss
+    return targets.cpu().numpy(), probs.cpu().numpy(), mean_train_loss
 
 
 def get_params_groups(model):
