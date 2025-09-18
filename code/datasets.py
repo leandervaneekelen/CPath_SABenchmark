@@ -5,11 +5,11 @@ import numpy as np
 
 def get_survival_datasets(fold, data, y_label, encoder, method, tile_index=None):
     df = pd.read_csv(data).rename(
-        columns={encoder: "encoder", y_label: "y", tile_index: "tile_index_path"}
+        columns={encoder: "encoder", y_label: "y", tile_index: "tile_index"}
     )
     columns = ["encoder", "y", "discrete_label", "censored"]
     if tile_index is not None:
-        columns.append("tile_index_path")
+        columns.append("tile_index")
 
     df_train = df.loc[df[fold] == "train", columns].reset_index(drop=True)
     df_val = df.loc[df[fold] == "val", columns].reset_index(drop=True)
@@ -63,8 +63,9 @@ class slide_dataset_survival(torch.utils.data.Dataset):
             feat = data
 
         if "tile_index" in row.keys():
-            tile_index = np.load(row["tile_index"])
-            feat = feat[tile_index]
+            if not pd.isna(row["tile_index"]):
+                tile_index = np.load(row["tile_index"])
+                feat = feat[tile_index]
 
         return {
             "features": feat,
