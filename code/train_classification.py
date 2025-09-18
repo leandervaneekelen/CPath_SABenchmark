@@ -12,6 +12,7 @@ import yaml
 import wandb
 
 from sklearn.metrics import roc_auc_score
+from sksurv.metrics import concordance_index_censored
 from pathlib import Path
 
 import datasets
@@ -260,13 +261,22 @@ def main(config=None):
 
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            val_targets, val_probs, val_loss = test(epoch, val_loader, model, criterion)
+            val_c_index, val_targets, val_probs, val_loss = test(
+                epoch, val_loader, model, criterion
+            )
             val_auc = roc_auc_score(val_targets, val_probs)
             # Log this epoch with a note
-            wandb.log({"epoch": epoch, "val_auc": val_auc, "val_loss": val_loss})
+            wandb.log(
+                {
+                    "epoch": epoch,
+                    "val_auc": val_auc,
+                    "val_loss": val_loss,
+                    "val_c_index": val_c_index,
+                }
+            )
         else:
             # Regular training and validation logic
-            train_targets, train_probs, train_loss = train(
+            train_c_index, train_targets, train_probs, train_loss = train(
                 epoch,
                 train_loader,
                 model,
@@ -276,7 +286,9 @@ def main(config=None):
                 wd_schedule,
             )
             train_auc = roc_auc_score(train_targets, train_probs)
-            val_targets, val_probs, val_loss = test(epoch, val_loader, model, criterion)
+            val_c_index, val_targets, val_probs, val_loss = test(
+                epoch, val_loader, model, criterion
+            )
             val_auc = roc_auc_score(val_targets, val_probs)
 
             # Get the current learning rate from the first parameter group
@@ -291,6 +303,8 @@ def main(config=None):
                     "val_loss": val_loss,
                     "train_auc": train_auc,
                     "val_auc": val_auc,
+                    "train_c_index": train_c_index,
+                    "val_c_index": val_c_index,
                     "lr_step": current_lr,
                     "wd_step": current_wd,
                 }
@@ -367,6 +381,7 @@ def test(epoch, loader, model, criterion):
     model.eval()
     # Initialize loss
     running_loss = 0.0
+    logits, censoring, time_to_event = [], [], []
     targets = torch.LongTensor(len(loader)).to(device)
     probs = torch.FloatTensor(len(loader)).to(device)
     # Loop through batches
@@ -375,24 +390,33 @@ def test(epoch, loader, model, criterion):
 
             # Forward pass
             results_dict = model_forward_pass(batch, model, args, device)
-            logits, Y_prob, Y_hat = (
+            logits_, Y_prob, Y_hat = (
                 results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
             )
 
-            ## Calculate loss
+            # Calculate loss
             target = batch["target"].long().to(device)
-            loss = criterion(logits, target)
+            loss = criterion(logits_, target)
             if args.method in ["GTP"]:
                 mc1 = results_dict["mc1"]
                 o1 = results_dict["o1"]
                 loss = loss + mc1 + o1
             running_loss += loss.item()
 
-            ## Clone output to output vector
+            # Clone outputs to respective output vectors
+            logits.extend(logits_.cpu().numpy())
+            censoring.extend(batch["censored"].cpu().numpy())
+            time_to_event.extend(batch["time_to_event"].cpu().numpy())
             targets[i] = target.item()
             probs[i] = Y_prob.detach()[:, 1].item()
+
+    c_index = concordance_index_censored(censoring, time_to_event, probs.cpu().numpy())[
+        0
+    ]
+
     mean_val_loss = running_loss / len(loader)
     return (
+        c_index,
         targets.cpu().numpy(),
         probs.cpu().numpy(),
         mean_val_loss,
@@ -406,6 +430,7 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
     model.train()
     # Initialize loss
     running_loss = 0.0
+    logits, censoring, time_to_event = [], [], []
     targets = torch.LongTensor(len(loader)).to(device)
     probs = torch.FloatTensor(len(loader)).to(device)
     # Loop through batches
@@ -419,19 +444,22 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
 
         # Forward pass
         results_dict = model_forward_pass(batch, model, args, device)
-        logits, Y_prob, Y_hat = (
+        logits_, Y_prob, Y_hat = (
             results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
         )
-        ## Calculate loss
+        # Calculate loss
         target = batch["target"].long().to(device)
-        loss = criterion(logits, target)
+        loss = criterion(logits_, target)
         if args.method in ["GTP"]:
             mc1 = results_dict["mc1"]
             o1 = results_dict["o1"]
             loss = loss + mc1 + o1
         running_loss += loss.item()
 
-        ## Clone output to output vector
+        # Clone outputs to respective output vectors
+        logits.extend(logits_.detach().cpu().numpy())
+        censoring.extend(batch["censored"].cpu().numpy())
+        time_to_event.extend(batch["time_to_event"].cpu().numpy())
         targets[i] = target.item()
         probs[i] = Y_prob.detach()[:, 1].item()
 
@@ -442,8 +470,12 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             optimizer.step()
             optimizer.zero_grad()
 
+    c_index = concordance_index_censored(censoring, time_to_event, probs.cpu().numpy())[
+        0
+    ]
+
     mean_train_loss = running_loss / len(loader)
-    return targets.cpu().numpy(), probs.cpu().numpy(), mean_train_loss
+    return c_index, targets.cpu().numpy(), probs.cpu().numpy(), mean_train_loss
 
 
 def get_params_groups(model):

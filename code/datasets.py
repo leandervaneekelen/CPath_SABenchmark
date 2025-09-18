@@ -98,12 +98,28 @@ class slide_dataset_survival_graph(slide_dataset_survival):
         return item
 
 
-def get_classification_datasets(fold, data, y_label, encoder, method, tile_index=None):
+def get_classification_datasets(
+    fold,
+    data,
+    y_label,
+    encoder,
+    method,
+    tile_index=None,
+    endpoint="Overall survival",
+    event_label="Deceased",
+):
     df = pd.read_csv(data)
     columns = [encoder, y_label]
-    if tile_index is not None:
-        columns.append(tile_index)
-    rename = {encoder: "encoder", y_label: "y", tile_index: "tile_index"}
+    for col in [tile_index, endpoint, event_label]:
+        if col is not None:
+            columns.append(col)
+    rename = {
+        encoder: "encoder",
+        y_label: "y",
+        tile_index: "tile_index",
+        endpoint: "endpoint",
+        event_label: "event_label",
+    }
     df_train = (
         df.loc[df[f"{fold}_{y_label}"] == "train", columns]
         .reset_index(drop=True)
@@ -157,6 +173,8 @@ class slide_dataset_classification(torch.utils.data.Dataset):
         row = self.df.iloc[index]
         path_to_data = row["encoder"]
         label = row["y"]
+        time_to_event = row["endpoint"] if "endpoint" in row else None
+        censored = ~row["event_label"] if "event_label" in row else None
         data = np.load(path_to_data)  # feature matrix and possibly other data
         try:
             feat = data["features"]
@@ -166,7 +184,12 @@ class slide_dataset_classification(torch.utils.data.Dataset):
         if "tile_index" in row.keys():
             tile_index = np.load(row["tile_index"])
             feat = feat[tile_index]
-        return {"features": feat, "target": label}
+        return {
+            "features": feat,
+            "target": label,
+            "time_to_event": time_to_event,
+            "censored": censored,
+        }
 
 
 # TODO: implement this class
