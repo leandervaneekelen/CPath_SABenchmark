@@ -379,7 +379,7 @@ def test(epoch, loader, model, criterion):
             ## Clone output to output vector
             probs[i] = Y_prob.detach()[:, 1].item()
     mean_val_loss = running_loss / len(loader)
-    return mean_val_loss, probs.cpu().numpy()
+    return probs.cpu().numpy(), mean_val_loss, 
 
 
 def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
