@@ -256,6 +256,7 @@ def main(config=None):
     cudnn.benchmark = True
 
     best_auc = 0.0
+    best_c_index = 0.0
     # Main training loop
     for epoch in range(args.nepochs + 1):
 
@@ -314,9 +315,33 @@ def main(config=None):
             if val_auc > best_auc:
                 print(f"New best model found at epoch {epoch} with AUC: {val_auc}")
                 best_auc = val_auc
-                # Log this event to wandb
                 wandb.run.summary["best_auc"] = val_auc
-                wandb.run.summary["best_epoch"] = epoch
+                model_filename = (
+                    Path(args.output_dir) / f"{args.output_name}_best_auc.pt"
+                )
+                obj = {
+                    "epoch": epoch,
+                    "state_dict": model.state_dict(),
+                    "auc": val_auc,
+                    "optimizer": optimizer.state_dict(),
+                }
+                torch.save(obj, model_filename)
+            if val_c_index > best_c_index:
+                print(
+                    f"New best model found at epoch {epoch} with C-index: {val_c_index}"
+                )
+                best_c_index = val_c_index
+                wandb.run.summary["best_c_index"] = val_c_index
+                model_filename = (
+                    Path(args.output_dir) / f"{args.output_name}_best_cindex.pt"
+                )
+                obj = {
+                    "epoch": epoch,
+                    "state_dict": model.state_dict(),
+                    "c_index": val_c_index,
+                    "optimizer": optimizer.state_dict(),
+                }
+                torch.save(obj, model_filename)
 
     if args.data in ["camelyon16"] and test_loader != None:
         probs, _ = test(epoch, test_loader, model, criterion)
