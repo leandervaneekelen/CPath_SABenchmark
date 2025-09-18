@@ -69,6 +69,9 @@ parser.add_argument(
     choices=DIMENSIONS_PER_EMBEDDER.keys(),
     help="which encoder to use",
 )
+parser.add_argument(
+    "--tile_index", type=str, default=None, help="tile index column name"
+)
 
 parser.add_argument(
     "--fold",
@@ -200,6 +203,7 @@ def main(config=None):
         y_label=args.y_label,
         encoder=args.encoder,
         method=args.method,
+        tile_index=args.tile_index,
     )
     train_loader = torch.utils.data.DataLoader(
         train_dset,
