@@ -108,13 +108,13 @@ def get_classification_datasets(fold, data, y_label, encoder, method, tile_index
         df.loc[df[f"{fold}_{y_label}"] == "train", columns]
         .reset_index(drop=True)
         .dropna()
-        .rename(rename)
+        .rename(columns=rename)
     )
     df_val = (
         df.loc[df[f"{fold}_{y_label}"] == "val", columns]
         .reset_index(drop=True)
         .dropna()
-        .rename(rename)
+        .rename(columns=rename)
     )
     df_test = None
 
