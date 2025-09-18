@@ -326,6 +326,36 @@ def main(config=None):
     wandb.finish()
 
 
+def model_forward_pass(batch, model, args, device):
+    """
+    Handles the forward pass for all model flavors based on args.method.
+    Returns the results_dict from the model.
+    """
+
+    # Get features, reshape and copy to GPU
+    if args.method in ["ViT_MIL", "DTMIL"]:
+        feat = batch["feat_map"].float().permute(0, 3, 1, 2)
+    else:
+        feat = batch["features"].squeeze(0)
+    feat = feat.to(device)
+
+    if args.method in ["GTP"]:
+        adj = batch["adj_mtx"].float().to(device)
+        mask = batch["mask"].float().to(device)
+        results_dict = model(feat, adj, mask)
+    elif args.method in ["PatchGCN", "DeepGraphConv"]:
+        edge_index = batch["edge_index"].squeeze(0).to(device)
+        edge_latent = batch["edge_latent"].squeeze(0).to(device)
+        results_dict = model(feat=feat, edge_index=edge_index, edge_latent=edge_latent)
+    # elif args.method in ['DTMIL']:
+    #     mask = input['mask'].bool().to(device)
+    #     tensors = NestedTensor(feat, mask)
+    #     results_dict = model(tensors)
+    else:
+        results_dict = model(feat)
+    return results_dict
+
+
 def test(epoch, loader, model, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -339,34 +369,12 @@ def test(epoch, loader, model, criterion):
     with torch.no_grad():
         for i, batch in enumerate(loader):
 
-            # Get features, reshape and copy to GPU
-            if args.method in ["ViT_MIL", "DTMIL"]:
-                feat = batch["feat_map"].float().permute(0, 3, 1, 2)
-            else:
-                feat = batch["features"].squeeze(0)
-            feat = feat.to(device)
-
             # Forward pass
-            if args.method in ["GTP"]:
-                adj = batch["adj_mtx"].float().to(device)
-                mask = batch["mask"].float().to(device)
-                results_dict = model(feat, adj, mask)
-            elif args.method in ["PatchGCN", "DeepGraphConv"]:
-                edge_index = batch["edge_index"].squeeze(0).to(device)
-                edge_latent = batch["edge_latent"].squeeze(0).to(device)
-                results_dict = model(
-                    feat=feat, edge_index=edge_index, edge_latent=edge_latent
-                )
-            # elif args.method in ['DTMIL']:
-            #     mask = input['mask'].bool().to(device)
-            #     tensors = NestedTensor(feat, mask)
-            #     results_dict = model(tensors)
-            else:
-                results_dict = model(feat)
-
+            results_dict = model_forward_pass(batch, model, args, device)
             logits, Y_prob, Y_hat = (
                 results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
             )
+
             ## Calculate loss
             target = batch["target"].long().to(device)
             loss = criterion(logits, target)
@@ -379,7 +387,10 @@ def test(epoch, loader, model, criterion):
             ## Clone output to output vector
             probs[i] = Y_prob.detach()[:, 1].item()
     mean_val_loss = running_loss / len(loader)
-    return probs.cpu().numpy(), mean_val_loss, 
+    return (
+        probs.cpu().numpy(),
+        mean_val_loss,
+    )
 
 
 def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
@@ -398,48 +409,18 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             if j == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
 
-        target = batch["target"].long().to(device)
-
-        # Get features, reshape and copy to GPU
-        if args.method in ["ViT_MIL", "DTMIL"]:
-            feat = batch["feat_map"].float().permute(0, 3, 1, 2)
-        else:
-            feat = batch["features"].squeeze(0)
-        feat = feat.to(device)
-
         # Forward pass
-        if args.method == "GTP":
-            adj = batch["adj_mtx"].float().to(device)
-            mask = batch["mask"].float().to(device)
-            results_dict = model(feat, adj, mask)
-            logits = results_dict["logits"]
+        results_dict = model_forward_pass(batch, model, args, device)
+        logits, Y_prob, Y_hat = (
+            results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
+        )
+        ## Calculate loss
+        target = batch["target"].long().to(device)
+        loss = criterion(logits, target)
+        if args.method in ["GTP"]:
             mc1 = results_dict["mc1"]
             o1 = results_dict["o1"]
-            ## Calculate loss
-            loss = criterion(logits, target)
             loss = loss + mc1 + o1
-
-        elif args.method in ["PatchGCN", "DeepGraphConv"]:
-            edge_index = batch["edge_index"].squeeze(0).to(device)
-            edge_latent = batch["edge_latent"].squeeze(0).to(device)
-            results_dict = model(
-                feat=feat, edge_index=edge_index, edge_latent=edge_latent
-            )
-            logits = results_dict["logits"]
-            ## Calculate loss
-            loss = criterion(logits, target)
-
-        # elif args.method in ['DTMIL']:
-        #     mask = input['mask'].bool().to(device)
-        #     tensors = NestedTensor(feat, mask)
-        #     results_dict = model(tensors)
-
-        else:
-            results_dict = model(feat)
-            logits = results_dict["logits"]
-            ## Calculate loss
-            loss = criterion(logits, target)
-
         running_loss += loss.item()
 
         # Optimization step with optional gradient accumulation
