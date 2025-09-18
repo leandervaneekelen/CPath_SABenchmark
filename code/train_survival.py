@@ -1,10 +1,7 @@
 import torch.backends.cudnn as cudnn
 import torch
 import torch.optim as optim
-import torch.nn as nn
-import torch.nn.functional as F
 
-import os
 import pandas as pd
 import numpy as np
 import argparse
@@ -368,11 +365,6 @@ def main(config):
         }
         torch.save(obj, model_filename)
         print(f"Saved final model at epoch {epoch}")
-
-    # # Create a wandb Artifact and add the file to it
-    # model_artifact = wandb.Artifact('final_model_checkpoint', type='model')
-    # model_artifact.add_file(model_filename)
-    # run.log_artifact(model_artifact)
 
     run.finish()
     return val_cindex
