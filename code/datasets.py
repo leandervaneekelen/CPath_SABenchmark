@@ -2,12 +2,35 @@ import pandas as pd
 import torch
 import numpy as np
 
+from sklearn.utils.class_weight import compute_class_weight
 
-def get_survival_datasets(fold, data, y_label, encoder, method, tile_index=None):
-    df = pd.read_csv(data).rename(
-        columns={encoder: "encoder", y_label: "y", tile_index: "tile_index"}
-    )
-    columns = ["encoder", "y", "discrete_label", "censored"]
+
+def get_survival_datasets(
+    fold,
+    data,
+    y_label,
+    encoder,
+    method,
+    tile_index=None,
+    time_to_event="Overall survival",
+    event_label="Deceased",
+    n_subsamples=None,
+    random_seed=None,
+    noise_std=None,
+    cache_in_memory=False,
+):
+
+    df = pd.read_csv(data)
+    rename = {
+        encoder: "encoder",
+        y_label: "y",
+        tile_index: "tile_index",
+        time_to_event: "time_to_event",
+        event_label: "event_label",
+    }
+    df = df.rename(columns=rename)
+
+    columns = ["encoder", "y", "censored", "time_to_event", "event_label"]
     if tile_index is not None:
         columns.append("tile_index")
 
@@ -24,15 +47,37 @@ def get_survival_datasets(fold, data, y_label, encoder, method, tile_index=None)
         "ViT_MIL",
         "DTMIL",
     ]:
-        dset_train = slide_dataset_survival_graph(df_train)
-        dset_val = slide_dataset_survival_graph(df_val)
+        dset_train = slide_dataset_survival_graph(
+            df_train,
+            n_subsamples=n_subsamples,
+            random_seed=random_seed,
+            noise_std=noise_std,
+            cache_in_memory=cache_in_memory,
+        )
+        dset_val = slide_dataset_survival_graph(
+            df_val, cache_in_memory=cache_in_memory
+        )  # Cache validation but no augmentations
         dset_test = (
-            slide_dataset_survival_graph(df_test) if df_test is not None else None
+            slide_dataset_survival_graph(df_test, cache_in_memory=cache_in_memory)
+            if df_test is not None
+            else None
         )
     else:
-        dset_train = slide_dataset_survival(df_train)
-        dset_val = slide_dataset_survival(df_val)
-        dset_test = slide_dataset_survival(df_test) if df_test is not None else None
+        dset_train = slide_dataset_survival(
+            df_train,
+            n_subsamples=n_subsamples,
+            random_seed=random_seed,
+            noise_std=noise_std,
+            cache_in_memory=cache_in_memory,
+        )
+        dset_val = slide_dataset_survival(
+            df_val, cache_in_memory=cache_in_memory
+        )  # Cache validation but no augmentations
+        dset_test = (
+            slide_dataset_survival(df_test, cache_in_memory=cache_in_memory)
+            if df_test is not None
+            else None
+        )
 
     return dset_train, dset_val, dset_test
 
@@ -42,34 +87,104 @@ class slide_dataset_survival(torch.utils.data.Dataset):
     Slide level dataset which returns for each slide the feature matrix (h) and the discretized label, time-to-event and censoring status.
     """
 
-    def __init__(self, df):
+    def __init__(
+        self,
+        df,
+        n_subsamples=None,
+        random_seed=None,
+        noise_std=None,
+        cache_in_memory=False,
+    ):
         self.df = df
-        self.n_bins = df.discrete_label.nunique()
+        self.n_bins = df.y.nunique()
+        self.n_subsamples = n_subsamples
+        self.random_seed = random_seed
+        self.noise_std = noise_std  # Standard deviation for Gaussian noise
+        self.cache_in_memory = cache_in_memory
+        self.cached_features = {}  # Dictionary to store cached features
+
+        if random_seed is not None:
+            np.random.seed(random_seed)
+
+        # Cache all features in memory if requested
+        if self.cache_in_memory:
+            print(f"Caching {len(self.df)} samples in memory...")
+            self._cache_all_features()
+            print("Caching completed!")
+
+    def _cache_all_features(self):
+        """Load all features into memory"""
+        for idx, row in self.df.iterrows():
+            path_to_data = row["encoder"]
+
+            # Load the feature data
+            data = np.load(path_to_data)
+            try:
+                feat = data["features"]
+            except:
+                feat = data
+
+            # Apply tile index if available
+            if "tile_index" in row.keys():
+                if not pd.isna(row["tile_index"]):
+                    tile_index = np.load(row["tile_index"])
+                    feat = feat[tile_index]
+
+            # Store in cache using the dataframe index as key
+            self.cached_features[idx] = feat
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, index):
         row = self.df.iloc[index]
-        path_to_data = row["encoder"]
-        time_to_event = row["y"]
-        discrete_label = row["discrete_label"]
-        censored = row["censored"]
+        discrete_label = row["y"]
+        time_to_event = row["time_to_event"]
+        censored = bool(row["censored"])
 
-        data = np.load(path_to_data)  # feature matrix and possibly other data
-        try:
-            feat = data["features"]
-        except:
-            feat = data
+        # Get features from cache or load from disk
+        if self.cache_in_memory:
+            # Get the actual dataframe index (not the iloc index)
+            df_index = self.df.index[index]
+            selected_feat = self.cached_features[
+                df_index
+            ].copy()  # Copy to avoid modifying cached data
+        else:
+            # Load from disk (original behavior)
+            path_to_data = row["encoder"]
+            data = np.load(path_to_data)
+            try:
+                feat = data["features"]
+            except:
+                feat = data
 
-        if "tile_index" in row.keys():
-            if not pd.isna(row["tile_index"]):
-                tile_index = np.load(row["tile_index"])
-                feat = feat[tile_index]
+            if "tile_index" in row.keys():
+                if not pd.isna(row["tile_index"]):
+                    tile_index = np.load(row["tile_index"])
+                    feat = feat[tile_index]
+            selected_feat = feat
+
+        # Apply random subsampling if specified
+        if self.n_subsamples is not None and len(selected_feat) > 0:
+            n_tiles = len(selected_feat)
+            if n_tiles <= self.n_subsamples:
+                # If we have fewer tiles than requested, use all tiles
+                pass  # selected_feat remains unchanged
+            else:
+                # Randomly sample n_subsamples tiles
+                selected_indices = np.random.choice(
+                    n_tiles, size=self.n_subsamples, replace=False
+                )
+                selected_feat = selected_feat[selected_indices]
+
+        # Apply Gaussian noise augmentation if specified
+        if self.noise_std is not None and self.noise_std > 0:
+            noise = np.random.normal(0, self.noise_std, selected_feat.shape)
+            selected_feat = selected_feat + noise.astype(selected_feat.dtype)
 
         return {
-            "features": feat,
-            "discrete_label": discrete_label,
+            "features": selected_feat,
+            "target": discrete_label,
             "time_to_event": time_to_event,
             "censored": censored,
         }
@@ -77,14 +192,25 @@ class slide_dataset_survival(torch.utils.data.Dataset):
 
 # TODO: implement this class
 class slide_dataset_survival_graph(slide_dataset_survival):
-    def __init__(self, df):
-        super(slide_dataset_survival_graph, self).__init__(df)
+    def __init__(
+        self,
+        df,
+        n_subsamples=None,
+        random_seed=None,
+        noise_std=None,
+        cache_in_memory=False,
+    ):
+        super(slide_dataset_survival_graph, self).__init__(
+            df, n_subsamples, random_seed, noise_std, cache_in_memory
+        )
 
     def __getitem__(self, index):
-        # Load data using the parent class method
+        # Load data using the parent class method (which includes caching, subsampling and noise)
         item = super(slide_dataset_survival_graph, self).__getitem__(index)
-        # Additional graph-specific data extraction
-        data = torch.load(self.df.iloc[index].method_tensor_path)
+
+        # Additional graph-specific data extraction (these are typically smaller and loaded separately)
+        row = self.df.iloc[index]
+        data = torch.load(row.method_tensor_path)
         if "adj_mtx" in data:  # GTP
             item["adj_mtx"] = data["adj_mtx"]
             item["mask"] = data["mask"]
@@ -107,6 +233,10 @@ def get_classification_datasets(
     tile_index=None,
     endpoint="Overall survival",
     event_label="Deceased",
+    n_subsamples=None,
+    random_seed=None,
+    noise_std=None,
+    cache_in_memory=False,
 ):
     df = pd.read_csv(data)
     columns = [encoder, y_label]
@@ -143,16 +273,38 @@ def get_classification_datasets(
         "ViT_MIL",
         "DTMIL",
     ]:
-        dset_train = slide_dataset_classification_graph(df_train)
-        dset_val = slide_dataset_classification_graph(df_val)
+        # Apply augmentations and caching to training set, only caching to validation
+        dset_train = slide_dataset_classification_graph(
+            df_train,
+            n_subsamples=n_subsamples,
+            random_seed=random_seed,
+            noise_std=noise_std,
+            cache_in_memory=cache_in_memory,
+        )
+        dset_val = slide_dataset_classification_graph(
+            df_val, cache_in_memory=cache_in_memory
+        )  # Cache validation but no augmentations
         dset_test = (
-            slide_dataset_classification_graph(df_test) if df_test is not None else None
+            slide_dataset_classification_graph(df_test, cache_in_memory=cache_in_memory)
+            if df_test is not None
+            else None
         )
     else:
-        dset_train = slide_dataset_classification(df_train)
-        dset_val = slide_dataset_classification(df_val)
+        # Apply augmentations and caching to training set, only caching to validation
+        dset_train = slide_dataset_classification(
+            df_train,
+            n_subsamples=n_subsamples,
+            random_seed=random_seed,
+            noise_std=noise_std,
+            cache_in_memory=cache_in_memory,
+        )
+        dset_val = slide_dataset_classification(
+            df_val, cache_in_memory=cache_in_memory
+        )  # Cache validation but no augmentations
         dset_test = (
-            slide_dataset_classification(df_test) if df_test is not None else None
+            slide_dataset_classification(df_test, cache_in_memory=cache_in_memory)
+            if df_test is not None
+            else None
         )
 
     return dset_train, dset_val, dset_test
@@ -163,29 +315,100 @@ class slide_dataset_classification(torch.utils.data.Dataset):
     Slide level dataset which returns for each slide the feature matrix (h) and the target
     """
 
-    def __init__(self, df):
+    def __init__(
+        self,
+        df,
+        n_subsamples=None,
+        random_seed=None,
+        noise_std=None,
+        cache_in_memory=False,
+    ):
         self.df = df
+        self.n_subsamples = n_subsamples
+        self.random_seed = random_seed
+        self.noise_std = noise_std  # Standard deviation for Gaussian noise
+        self.cache_in_memory = cache_in_memory
+        self.cached_features = {}  # Dictionary to store cached features
+
+        if random_seed is not None:
+            np.random.seed(random_seed)
+
+        # Cache all features in memory if requested
+        if self.cache_in_memory:
+            print(f"Caching {len(self.df)} samples in memory...")
+            self._cache_all_features()
+            print("Caching completed!")
+
+    def _cache_all_features(self):
+        """Load all features into memory"""
+        for idx, row in self.df.iterrows():
+            path_to_data = row["encoder"]
+
+            # Load the feature data
+            data = np.load(path_to_data)
+            try:
+                feat = data["features"]
+            except:
+                feat = data
+
+            # Apply tile index if available
+            if "tile_index" in row.keys() and not pd.isna(row["tile_index"]):
+                tile_index = np.load(row["tile_index"])
+                feat = feat[tile_index]
+
+            # Store in cache using the dataframe index as key
+            self.cached_features[idx] = feat
 
     def __len__(self):
         return len(self.df)
 
     def __getitem__(self, index):
         row = self.df.iloc[index]
-        path_to_data = row["encoder"]
         label = row["y"]
         time_to_event = row["endpoint"] if "endpoint" in row else None
         censored = ~row["event_label"] if "event_label" in row else None
-        data = np.load(path_to_data)  # feature matrix and possibly other data
-        try:
-            feat = data["features"]
-        except:
-            feat = data
 
-        if "tile_index" in row.keys():
-            tile_index = np.load(row["tile_index"])
-            feat = feat[tile_index]
+        # Get features from cache or load from disk
+        if self.cache_in_memory:
+            # Get the actual dataframe index (not the iloc index)
+            df_index = self.df.index[index]
+            selected_feat = self.cached_features[
+                df_index
+            ].copy()  # Copy to avoid modifying cached data
+        else:
+            # Load from disk (original behavior)
+            path_to_data = row["encoder"]
+            data = np.load(path_to_data)
+            try:
+                feat = data["features"]
+            except:
+                feat = data
+
+            if "tile_index" in row.keys() and not pd.isna(row["tile_index"]):
+                tile_index = np.load(row["tile_index"])
+                feat = feat[tile_index]
+            selected_feat = feat
+
+        # Apply random subsampling if specified
+        if self.n_subsamples is not None and len(selected_feat) > 0:
+            n_tiles = len(selected_feat)
+            if n_tiles <= self.n_subsamples:
+                # If we have fewer tiles than requested, use all tiles
+                pass  # selected_feat remains unchanged
+            else:
+                # Randomly sample n_subsamples tiles
+                selected_indices = np.random.choice(
+                    n_tiles, size=self.n_subsamples, replace=False
+                )
+                selected_feat = selected_feat[selected_indices]
+
+        # Apply Gaussian noise augmentation if specified
+        if self.noise_std is not None and self.noise_std > 0:
+            noise = np.random.normal(0, self.noise_std, selected_feat.shape)
+            selected_feat = selected_feat + noise.astype(selected_feat.dtype)
+
         return {
-            "features": feat,
+            "features": selected_feat,
             "target": label,
             "time_to_event": time_to_event,
             "censored": censored,
@@ -194,14 +417,25 @@ class slide_dataset_classification(torch.utils.data.Dataset):
 
 # TODO: implement this class
 class slide_dataset_classification_graph(slide_dataset_classification):
-    def __init__(self, df):
-        super(slide_dataset_classification_graph, self).__init__(df)
+    def __init__(
+        self,
+        df,
+        n_subsamples=None,
+        random_seed=None,
+        noise_std=None,
+        cache_in_memory=False,
+    ):
+        super(slide_dataset_classification_graph, self).__init__(
+            df, n_subsamples, random_seed, noise_std, cache_in_memory
+        )
 
     def __getitem__(self, index):
-        # Load data using the parent class method
+        # Load data using the parent class method (which includes caching, subsampling and noise)
         item = super(slide_dataset_classification_graph, self).__getitem__(index)
-        # Additional graph-specific data extraction
-        data = torch.load(self.df.iloc[index].method_tensor_path)
+
+        # Additional graph-specific data extraction (these are typically smaller and loaded separately)
+        row = self.df.iloc[index]
+        data = torch.load(row.method_tensor_path)
         if "adj_mtx" in data:  # GTP
             item["adj_mtx"] = data["adj_mtx"]
             item["mask"] = data["mask"]

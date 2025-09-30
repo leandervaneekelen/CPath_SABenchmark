@@ -38,22 +38,7 @@ parser.add_argument(
     "--method",
     type=str,
     default="",
-    choices=[
-        "AB-MIL",
-        "AB-MIL_FC_small",
-        "AB-MIL_FC_big",
-        "CLAM_SB",
-        "CLAM_MB",
-        "transMIL",
-        "DS-MIL",
-        "VarMIL",
-        "GTP",
-        "PatchGCN",
-        "DeepGraphConv",
-        "ViT_MIL",
-        "DTMIL",
-        "LongNet_ViT",
-    ],
+    choices=modules.AGGREGATION_METHODS,
     help="which aggregation method to use",
 )
 parser.add_argument("--data", type=str, default="", help="Path to dataset in excel")
@@ -138,6 +123,36 @@ parser.add_argument(
 )
 parser.add_argument("--random_seed", default=0, type=int, help="random seed")
 
+# Balanced sampling
+parser.add_argument(
+    "--balanced_sampling",
+    action="store_true",
+    help="Use balanced sampling to handle class imbalance",
+)
+
+# Tile subsampling augmentation
+parser.add_argument(
+    "--n_subsamples",
+    type=int,
+    default=None,
+    help="Number of tiles to randomly subsample from each slide for augmentation (None = use all tiles)",
+)
+
+# Gaussian noise augmentation
+parser.add_argument(
+    "--noise_std",
+    type=float,
+    default=None,
+    help="Standard deviation for Gaussian noise augmentation on embeddings (None = no noise)",
+)
+
+# Memory caching
+parser.add_argument(
+    "--cache_in_memory",
+    action="store_true",
+    help="Cache all features in memory at initialization to speed up training",
+)
+
 # Weight and Bias Config
 parser.add_argument("--wandb_project", type=str, help="name of project in wandb")
 parser.add_argument("--wandb_note", type=str, help="note of project in wandb")
@@ -205,11 +220,25 @@ def main(config=None):
         encoder=args.encoder,
         method=args.method,
         tile_index=args.tile_index,
+        n_subsamples=args.n_subsamples,
+        random_seed=args.random_seed,
+        noise_std=args.noise_std,
+        cache_in_memory=args.cache_in_memory,
     )
+
+    # Create balanced sampler if requested
+    train_sampler = None
+    shuffle_train = True
+    if args.balanced_sampling:
+        train_sampler = datasets.create_balanced_sampler(train_dset)
+        shuffle_train = False  # Cannot use shuffle with custom sampler
+
+    collate_fn = datasets.collate_batch if args.batch_size > 1 else None
     train_loader = torch.utils.data.DataLoader(
         train_dset,
         batch_size=args.batch_size,
-        shuffle=True,
+        shuffle=shuffle_train,
+        sampler=train_sampler,
         num_workers=args.workers,
         worker_init_fn=lambda worker_id: np.random.seed(args.random_seed + worker_id),
         generator=torch.Generator().manual_seed(args.random_seed),

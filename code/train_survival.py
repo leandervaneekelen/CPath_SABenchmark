@@ -127,6 +127,38 @@ parser.add_argument(
 )
 parser.add_argument("--random_seed", default=None, type=int, help="random seed")
 
+
+# Balanced sampling
+parser.add_argument(
+    "--balanced_sampling",
+    default=True,
+    action="store_true",
+    help="Use balanced sampling to handle class imbalance",
+)
+
+# Tile subsampling augmentation
+parser.add_argument(
+    "--n_subsamples",
+    type=int,
+    default=None,
+    help="Number of tiles to randomly subsample from each slide for augmentation (None = use all tiles)",
+)
+
+# Gaussian noise augmentation
+parser.add_argument(
+    "--noise_std",
+    type=float,
+    default=None,
+    help="Standard deviation for Gaussian noise augmentation on embeddings (None = no noise)",
+)
+
+# Memory caching
+parser.add_argument(
+    "--cache_in_memory",
+    action="store_true",
+    help="Cache all features in memory at initialization to speed up training",
+)
+
 # Weight and Bias Config
 parser.add_argument(
     "--wandb_project", type=str, default=None, help="name of project in wandb"
@@ -231,7 +263,19 @@ def main(config):
         encoder=config.encoder,
         method=config.method,
         tile_index=config.tile_index,
+        n_subsamples=config.n_subsamples,
+        random_seed=config.random_seed,
+        noise_std=config.noise_std,
+        cache_in_memory=config.cache_in_memory,
     )
+
+    # Create balanced sampler if specified
+    train_sampler = None
+    shuffle_train = True
+    if config.balanced_sampling:
+        train_sampler = datasets.create_balanced_sampler(train_dset)
+        shuffle_train = False  # Sampler shuffles data, so disable shuffle in DataLoader
+
     n_bins = 1 if config.loss == "cox" else train_dset.n_bins
     collate_fn = collate_survival if config.batch_size > 1 else None
     train_loader = torch.utils.data.DataLoader(
