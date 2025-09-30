@@ -447,3 +447,61 @@ class slide_dataset_classification_graph(slide_dataset_classification):
             item["feat_map"] = data["feat_map"]
             item["mask"] = data["mask"]
         return item
+
+
+def create_balanced_sampler(dataset):
+    """
+    Create a balanced sampler for handling class imbalance.
+    """
+    # Get all targets from the dataset
+    targets = []
+    for i in range(len(dataset)):
+        item = dataset[i]
+        targets.append(item["target"])
+
+    targets = np.array(targets)
+
+    # Calculate class weights
+    classes = np.unique(targets)
+    class_weights = compute_class_weight("balanced", classes=classes, y=targets)
+
+    # Create sample weights
+    sample_weights = np.zeros(len(targets))
+    for i, class_label in enumerate(classes):
+        sample_weights[targets == class_label] = class_weights[i]
+
+    # Create WeightedRandomSampler
+    sampler = torch.utils.data.WeightedRandomSampler(
+        weights=sample_weights, num_samples=len(sample_weights), replacement=True
+    )
+
+    # print(f"Class distribution: {np.bincount(targets)}")
+    # print(f"Class weights: {dict(zip(classes, class_weights))}")
+
+    return sampler
+
+
+def collate_batch(batch):
+    """
+    Collation function for stacking batches of variable-length tiles.
+    Groups features into a list and stacks other elements into tensors.
+    """
+    features = [torch.Tensor(item["features"]) for item in batch]
+    targets = [item["target"] for item in batch]
+    time_to_events = (
+        [item["time_to_event"] for item in batch]
+        if "time_to_event" in batch[0] and batch[0]["time_to_event"] is not None
+        else None
+    )
+    censored = (
+        [item["censored"] for item in batch]
+        if "censored" in batch[0] and batch[0]["censored"] is not None
+        else None
+    )
+
+    return {
+        "features": features,
+        "target": targets,
+        "time_to_event": time_to_events,
+        "censored": censored,
+    }

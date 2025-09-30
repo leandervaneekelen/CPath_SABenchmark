@@ -242,13 +242,22 @@ def main(config=None):
         num_workers=args.workers,
         worker_init_fn=lambda worker_id: np.random.seed(args.random_seed + worker_id),
         generator=torch.Generator().manual_seed(args.random_seed),
+        collate_fn=collate_fn,
     )
     val_loader = torch.utils.data.DataLoader(
-        val_dset, batch_size=1, shuffle=False, num_workers=args.workers
+        val_dset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.workers,
+        collate_fn=collate_fn,
     )
     test_loader = (
         torch.utils.data.DataLoader(
-            test_dset, batch_size=1, shuffle=False, num_workers=args.workers
+            test_dset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=args.workers,
+            collate_fn=collate_fn,
         )
         if test_dset is not None
         else None

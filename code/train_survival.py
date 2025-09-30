@@ -277,15 +277,16 @@ def main(config):
         shuffle_train = False  # Sampler shuffles data, so disable shuffle in DataLoader
 
     n_bins = 1 if config.loss == "cox" else train_dset.n_bins
-    collate_fn = collate_survival if config.batch_size > 1 else None
+    collate_fn = datasets.collate_batch if config.batch_size > 1 else None
     train_loader = torch.utils.data.DataLoader(
         train_dset,
         batch_size=config.batch_size,
-        collate_fn=collate_fn,
-        shuffle=True,
+        shuffle=shuffle_train,
+        sampler=train_sampler,
         num_workers=config.workers,
         worker_init_fn=lambda worker_id: np.random.seed(config.random_seed + worker_id),
         generator=torch.Generator().manual_seed(config.random_seed),
+        collate_fn=collate_fn,
     )
     val_loader = torch.utils.data.DataLoader(
         val_dset,
@@ -298,10 +299,11 @@ def main(config):
         torch.utils.data.DataLoader(
             test_dset,
             batch_size=config.batch_size,
-            collate_fn=collate_fn,
             shuffle=False,
             num_workers=config.workers,
+            collate_fn=collate_fn,
         )
+            collate_fn=collate_fn,
         if test_dset is not None
         else None
     )
