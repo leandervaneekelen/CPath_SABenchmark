@@ -322,18 +322,18 @@ def main(config):
     )
     cudnn.benchmark = True
 
-    best_cindex = 0.0
+    best_c_index = 0.0
     # Main training loop
     for epoch in range(config.nepochs + 1):
 
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            val_loss, val_cindex, _ = test(epoch, config, val_loader, model, criterion)
+            val_loss, val_c_index, _ = test(epoch, config, val_loader, model, criterion)
             # Log this epoch with a note
-            run.log({"epoch": epoch, "val_cindex": val_cindex, "val_loss": val_loss})
+            run.log({"epoch": epoch, "val_c_index": val_c_index, "val_loss": val_loss})
         else:
             # Regular training and validation logic
-            train_loss, train_cindex = train(
+            train_loss, train_c_index = train(
                 epoch,
                 config,
                 train_loader,
@@ -343,7 +343,7 @@ def main(config):
                 lr_schedule,
                 wd_schedule,
             )
-            val_loss, val_cindex, val_risk_scores = test(
+            val_loss, val_c_index, val_risk_scores = test(
                 epoch, config, val_loader, model, criterion
             )
 
@@ -359,28 +359,28 @@ def main(config):
                     "epoch": epoch,
                     "train_loss": train_loss,
                     "val_loss": val_loss,
-                    "train_cindex": train_cindex,
-                    "val_cindex": val_cindex,
-                    # "val_mean_cumulative_auc": mean_auc,
+                    "train_c_index": train_c_index,
+                    "val_c_index": val_c_index,
+                    "val_mean_cumulative_auc": mean_auc,
                     "lr_step": current_lr,
                     "wd_step": current_wd,
                 }
             )
 
             # Check if the current model is the best one
-            if val_cindex > best_cindex:
+            if val_c_index > best_c_index:
                 print(
-                    f"New best model found at epoch {epoch} with (validation) C-index: {val_cindex}"
+                    f"New best model found at epoch {epoch} with (validation) C-index: {val_c_index}"
                 )
-                best_cindex = val_cindex
+                best_c_index = val_c_index
                 # Log this event to wandb
-                run.summary["best_c_index"] = val_cindex
+                run.summary["best_c_index"] = val_c_index
                 run.summary["best_epoch"] = epoch
 
     if config.data in ["camelyon16"] and test_loader != None:
-        _, test_cindex = test(epoch, config, test_loader, model, criterion)
+        _, test_c_index = test(epoch, config, test_loader, model, criterion)
         # Log this epoch with a note
-        wandb.log({"epoch": epoch, "test_c_index": test_cindex})
+        wandb.log({"epoch": epoch, "test_c_index": test_c_index})
 
     # Model saving logic
     if epoch == config.nepochs:  # only save the last model to artifact
@@ -388,14 +388,14 @@ def main(config):
         obj = {
             "epoch": epoch,
             "state_dict": model.state_dict(),
-            "c_index": val_cindex,
+            "c_index": val_c_index,
             "optimizer": optimizer.state_dict(),
         }
         torch.save(obj, model_filename)
         print(f"Saved final model at epoch {epoch}")
 
     run.finish()
-    return val_cindex
+    return val_c_index
 
 
 def test(epoch, config, loader, model, criterion):
@@ -599,7 +599,7 @@ def find_best_hyperparameters(
     label_filter,
     encoder_filter,
     method_filter,
-    metric="val_cindex",
+    metric="val_c_index",
     config_interest=None,
 ):
     # Initialize the API and get the runs
@@ -659,7 +659,7 @@ def update_args_with_best_hyperparameters(args):
         args.y_label,
         args.encoder,
         args.method,
-        metric="val_cindex",
+        metric="val_c_index",
         config_interest=["lr", "weight_decay", "momentum"],
     )
 
