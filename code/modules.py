@@ -86,3 +86,39 @@ def get_aggregator(method, n_classes, ndim=1024, **kwargs):
     #     return DTMIL(ndim=ndim, n_classes=2, **kwargs)
     else:
         raise Exception(f"Method {method} not defined")
+
+
+def model_forward_pass(batch, model, method, device):
+    """
+    Handles the forward pass for all model flavors based on `method`.
+    Returns the results_dict from the model.
+    """
+
+    # Get features, reshape and copy to GPU
+    if method in ["ViT_MIL", "DTMIL"]:
+        feat = batch["feat_map"].float().permute(0, 3, 1, 2)
+        feat = feat.to(device)
+    else:
+        feat = batch["features"]
+        if isinstance(feat, list):
+            # Handle batch case - features is a list of tensors
+            feat = [f.to(device) for f in feat]
+        else:
+            # Handle single sample case
+            feat = feat.to(device)
+
+    if method in ["GTP"]:
+        adj = batch["adj_mtx"].float().to(device)
+        mask = batch["mask"].float().to(device)
+        results_dict = model(feat, adj, mask)
+    elif method in ["PatchGCN", "DeepGraphConv"]:
+        edge_index = batch["edge_index"].squeeze(0).to(device)
+        edge_latent = batch["edge_latent"].squeeze(0).to(device)
+        results_dict = model(feat=feat, edge_index=edge_index, edge_latent=edge_latent)
+    # elif args.method in ['DTMIL']:
+    #     mask = input['mask'].bool().to(device)
+    #     tensors = NestedTensor(feat, mask)
+    #     results_dict = model(tensors)
+    else:
+        results_dict = model(feat)
+    return results_dict

@@ -410,19 +410,6 @@ def test(epoch, config, loader, model, criterion):
     with torch.no_grad():
         for i, batch in enumerate(loader):
 
-            # Get features, reshape and copy to GPU
-            if config.method in ["ViT_MIL", "DTMIL"]:
-                feat = batch["feat_map"].float().permute(0, 3, 1, 2)
-                feat = feat.to(device)
-            else:
-                feat = batch["features"]
-                if config.batch_size == 1:
-                    feat = feat.squeeze(0)
-                if isinstance(feat, list):
-                    feat = [f.to(device) for f in feat]
-                else:
-                    feat = feat.to(device)
-
             # Get targets
             discrete_labels, time_to_events, censored = (
                 batch["discrete_label"],
@@ -432,22 +419,9 @@ def test(epoch, config, loader, model, criterion):
             discrete_labels, censored = discrete_labels.to(device), censored.to(device)
 
             # Forward pass
-            if config.method in ["GTP"]:
-                adj = batch["adj_mtx"].float().to(device)
-                mask = batch["mask"].float().to(device)
-                results_dict = model(feat, adj, mask)
-            elif config.method in ["PatchGCN", "DeepGraphConv"]:
-                edge_index = batch["edge_index"].squeeze(0).to(device)
-                edge_latent = batch["edge_latent"].squeeze(0).to(device)
-                results_dict = model(
-                    feat=feat, edge_index=edge_index, edge_latent=edge_latent
-                )
-            # elif config.method in ['DTMIL']:
-            #     mask = input['mask'].bool().to(device)
-            #     tensors = NestedTensor(feat, mask)
-            #     results_dict = model(tensors)
-            else:
-                results_dict = model(feat)
+            results_dict = modules.model_forward_pass(
+                batch, model, config.method, device
+            )
 
             # Calculate discrete hazards/survival function
             logits = results_dict["logits"]  # [batch_size, n_bins]
@@ -503,19 +477,6 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
             if j == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
 
-        # Get features, reshape and copy to GPU
-        if config.method in ["ViT_MIL", "DTMIL"]:
-            feat = batch["feat_map"].float().permute(0, 3, 1, 2)
-            feat = feat.to(device)
-        else:
-            feat = batch["features"]
-            if config.batch_size == 1:
-                feat = feat.squeeze(0)
-            if isinstance(feat, list):
-                feat = [f.to(device) for f in feat]
-            else:
-                feat = feat.to(device)
-
         # Get targets
         discrete_labels, time_to_events, censored = (
             batch["discrete_label"],
@@ -525,22 +486,7 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
         discrete_labels, censored = discrete_labels.to(device), censored.to(device)
 
         # Forward pass
-        if config.method == "GTP":
-            adj = batch["adj_mtx"].float().to(device)
-            mask = batch["mask"].float().to(device)
-            results_dict = model(feat, adj, mask)
-        elif config.method in ["PatchGCN", "DeepGraphConv"]:
-            edge_index = batch["edge_index"].squeeze(0).to(device)
-            edge_latent = batch["edge_latent"].squeeze(0).to(device)
-            results_dict = model(
-                feat=feat, edge_index=edge_index, edge_latent=edge_latent
-            )
-        # elif config.method in ['DTMIL']:
-        #     mask = input['mask'].bool().to(device)
-        #     tensors = NestedTensor(feat, mask)
-        #     results_dict = model(tensors)
-        else:
-            results_dict = model(feat)
+        results_dict = modules.model_forward_pass(batch, model, config.method, device)
 
         # Calculate discrete hazards/survival function
         logits = results_dict["logits"]  # [batch_size, n_bins]

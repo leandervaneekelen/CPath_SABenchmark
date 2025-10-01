@@ -407,36 +407,6 @@ def main(config=None):
     wandb.finish()
 
 
-def model_forward_pass(batch, model, args, device):
-    """
-    Handles the forward pass for all model flavors based on args.method.
-    Returns the results_dict from the model.
-    """
-
-    # Get features, reshape and copy to GPU
-    if args.method in ["ViT_MIL", "DTMIL"]:
-        feat = batch["feat_map"].float().permute(0, 3, 1, 2)
-    else:
-        feat = batch["features"].squeeze(0)
-    feat = feat.to(device)
-
-    if args.method in ["GTP"]:
-        adj = batch["adj_mtx"].float().to(device)
-        mask = batch["mask"].float().to(device)
-        results_dict = model(feat, adj, mask)
-    elif args.method in ["PatchGCN", "DeepGraphConv"]:
-        edge_index = batch["edge_index"].squeeze(0).to(device)
-        edge_latent = batch["edge_latent"].squeeze(0).to(device)
-        results_dict = model(feat=feat, edge_index=edge_index, edge_latent=edge_latent)
-    # elif args.method in ['DTMIL']:
-    #     mask = input['mask'].bool().to(device)
-    #     tensors = NestedTensor(feat, mask)
-    #     results_dict = model(tensors)
-    else:
-        results_dict = model(feat)
-    return results_dict
-
-
 def test(epoch, loader, model, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -452,7 +422,7 @@ def test(epoch, loader, model, criterion):
         for i, batch in enumerate(loader):
 
             # Forward pass
-            results_dict = model_forward_pass(batch, model, args, device)
+            results_dict = modules.model_forward_pass(batch, model, args.method, device)
             logits_, Y_prob, Y_hat = (
                 results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
             )
@@ -506,7 +476,7 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
                 param_group["weight_decay"] = wd_schedule[it]
 
         # Forward pass
-        results_dict = model_forward_pass(batch, model, args, device)
+        results_dict = modules.model_forward_pass(batch, model, args.method, device)
         logits_, Y_prob, Y_hat = (
             results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
         )
