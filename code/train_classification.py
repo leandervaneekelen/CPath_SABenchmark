@@ -415,11 +415,19 @@ def test(epoch, loader, model, criterion):
     # Initialize loss
     running_loss = 0.0
     logits, censoring, time_to_event = [], [], []
-    targets = torch.LongTensor(len(loader)).to(device)
-    probs = torch.FloatTensor(len(loader)).to(device)
+    targets = []
+    probs = []
+
     # Loop through batches
     with torch.no_grad():
         for i, batch in enumerate(loader):
+
+            # Get targets
+            target, time_to_events, censored = (
+                batch["target"].long().to(device),
+                batch["time_to_event"].float(),
+                batch["censored"].bool(),
+            )
 
             # Forward pass
             results_dict = modules.model_forward_pass(batch, model, args.method, device)
@@ -428,30 +436,25 @@ def test(epoch, loader, model, criterion):
             )
 
             # Calculate loss
-            target = batch["target"].long().to(device)
-            loss = criterion(logits_, target)
-            if args.method in ["GTP"]:
-                mc1 = results_dict["mc1"]
-                o1 = results_dict["o1"]
-                loss = loss + mc1 + o1
+            mc1 = results_dict.get("mc1", 0.0)  # Optional aux loss from GTP
+            o1 = results_dict.get("o1", 0.0)  # Optional aux loss from GTP
+            loss = criterion(logits_, target) + mc1 + o1
             running_loss += loss.item()
 
-            # Clone outputs to respective output vectors
+            # Collect outputs
             logits.extend(logits_.cpu().numpy())
-            censoring.extend(batch["censored"].cpu().numpy())
-            time_to_event.extend(batch["time_to_event"].cpu().numpy())
-            targets[i] = target.item()
-            probs[i] = Y_prob.detach()[:, 1].item()
+            censoring.extend(censored)
+            time_to_event.extend(time_to_events)
+            targets.extend(target.cpu().numpy())
+            probs.extend(Y_prob[:, 1].cpu().numpy())
 
-    c_index = concordance_index_censored(censoring, time_to_event, probs.cpu().numpy())[
-        0
-    ]
+    c_index = concordance_index_censored(censoring, time_to_event, probs)[0]
 
     mean_val_loss = running_loss / len(loader)
     return (
         c_index,
-        targets.cpu().numpy(),
-        probs.cpu().numpy(),
+        np.array(targets),
+        np.array(probs),
         mean_val_loss,
     )
 
@@ -464,8 +467,9 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
     # Initialize loss
     running_loss = 0.0
     logits, censoring, time_to_event = [], [], []
-    targets = torch.LongTensor(len(loader)).to(device)
-    probs = torch.FloatTensor(len(loader)).to(device)
+    targets = []
+    probs = []
+
     # Loop through batches
     for i, batch in enumerate(loader):
         ## Update weight decay and learning rate according to their schedule
@@ -475,26 +479,31 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             if j == 0:  # only the first group is regularized
                 param_group["weight_decay"] = wd_schedule[it]
 
+        # Get targets
+        target, time_to_events, censored = (
+            batch["target"].long().to(device),
+            batch["time_to_event"].float(),
+            batch["censored"].bool(),
+        )
+
         # Forward pass
         results_dict = modules.model_forward_pass(batch, model, args.method, device)
         logits_, Y_prob, Y_hat = (
             results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
         )
+
         # Calculate loss
-        target = batch["target"].long().to(device)
-        loss = criterion(logits_, target)
-        if args.method in ["GTP"]:
-            mc1 = results_dict["mc1"]
-            o1 = results_dict["o1"]
-            loss = loss + mc1 + o1
+        mc1 = results_dict.get("mc1", 0.0)  # Optional aux loss from GTP
+        o1 = results_dict.get("o1", 0.0)  # Optional aux loss from GTP
+        loss = criterion(logits_, target) + mc1 + o1
         running_loss += loss.item()
 
-        # Clone outputs to respective output vectors
+        # Collect outputs
         logits.extend(logits_.detach().cpu().numpy())
-        censoring.extend(batch["censored"].cpu().numpy())
-        time_to_event.extend(batch["time_to_event"].cpu().numpy())
-        targets[i] = target.item()
-        probs[i] = Y_prob.detach()[:, 1].item()
+        censoring.extend(censored.cpu().numpy())
+        time_to_event.extend(time_to_events.cpu().numpy())
+        targets.extend(target.cpu().numpy())
+        probs.extend(Y_prob.detach()[:, 1].cpu().numpy())
 
         # Optimization step with optional gradient accumulation
         loss /= args.gradient_accumulation_steps
@@ -503,12 +512,11 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
             optimizer.step()
             optimizer.zero_grad()
 
-    c_index = concordance_index_censored(censoring, time_to_event, probs.cpu().numpy())[
-        0
-    ]
+    # Calculate c-index
+    c_index = concordance_index_censored(censoring, time_to_event, probs)[0]
 
     mean_train_loss = running_loss / len(loader)
-    return c_index, targets.cpu().numpy(), probs.cpu().numpy(), mean_train_loss
+    return c_index, np.array(targets), np.array(probs), mean_train_loss
 
 
 def get_params_groups(model):

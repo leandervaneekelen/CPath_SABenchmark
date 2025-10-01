@@ -487,17 +487,9 @@ def collate_batch(batch):
     Groups features into a list and stacks other elements into tensors.
     """
     features = [torch.Tensor(item["features"]) for item in batch]
-    targets = [item["target"] for item in batch]
-    time_to_events = (
-        [item["time_to_event"] for item in batch]
-        if "time_to_event" in batch[0] and batch[0]["time_to_event"] is not None
-        else None
-    )
-    censored = (
-        [item["censored"] for item in batch]
-        if "censored" in batch[0] and batch[0]["censored"] is not None
-        else None
-    )
+    targets = torch.tensor([item["target"] for item in batch])
+    time_to_events = torch.tensor([item["time_to_event"] for item in batch])
+    censored = torch.tensor([item["censored"] for item in batch], dtype=torch.bool)
 
     return {
         "features": features,

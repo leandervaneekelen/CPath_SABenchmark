@@ -285,7 +285,6 @@ def main(config):
             num_workers=config.workers,
             collate_fn=collate_fn,
         )
-            collate_fn=collate_fn,
         if test_dset is not None
         else None
     )
@@ -403,8 +402,7 @@ def test(epoch, config, loader, model, criterion):
 
     model.eval()
     running_loss = 0.0
-    censoring, times_to_events = [], []
-    risk_scores, labels = [], []
+    censoring, times_to_events, risk_scores = [], [], []
 
     # Loop through batches
     with torch.no_grad():
@@ -412,11 +410,10 @@ def test(epoch, config, loader, model, criterion):
 
             # Get targets
             discrete_labels, time_to_events, censored = (
-                batch["discrete_label"],
-                batch["time_to_event"],
-                batch["censored"],
+                batch["target"].to(device),
+                batch["time_to_event"].float(),
+                batch["censored"].bool().to(device),
             )
-            discrete_labels, censored = discrete_labels.to(device), censored.to(device)
 
             # Forward pass
             results_dict = modules.model_forward_pass(
@@ -444,11 +441,10 @@ def test(epoch, config, loader, model, criterion):
             )
             running_loss += loss.item()
 
-            # Calculate risk scores
+            # Calculate risk scores and collect outputs
             risk = -torch.sum(surv, dim=1)  # [batch_size]
-            risk_scores.extend(risk.clone().tolist())
-            labels.extend(discrete_labels.clone().tolist())
-            censoring.extend(censored.clone().tolist())
+            risk_scores.extend(risk.detach().clone().tolist())
+            censoring.extend(censored.detach().clone().tolist())
             times_to_events.extend(time_to_events.clone().tolist())
 
     # Calculate c-index of the epoch
@@ -479,12 +475,10 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
 
         # Get targets
         discrete_labels, time_to_events, censored = (
-            batch["discrete_label"],
-            batch["time_to_event"],
-            batch["censored"],
+            batch["target"].to(device),
+            batch["time_to_event"].float(),
+            batch["censored"].bool().to(device),
         )
-        discrete_labels, censored = discrete_labels.to(device), censored.to(device)
-
         # Forward pass
         results_dict = modules.model_forward_pass(batch, model, config.method, device)
 
@@ -503,11 +497,13 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
         )
         running_loss += loss.item()
 
-        # Calculate risk scores
+        # Calculate risk scores and collect outputs
         risk = -torch.sum(surv, dim=1)  # [batch_size]
-        risk_scores.extend(risk.clone().tolist())
-        labels.extend(discrete_labels.clone().tolist())
-        censoring.extend(censored.clone().tolist())
+
+        # Collect outputs (handle both single and batch cases)
+        risk_scores.extend(risk.detach().clone().tolist())
+        labels.extend(discrete_labels.detach().clone().tolist())
+        censoring.extend(censored.detach().clone().tolist())
         times_to_events.extend(time_to_events.clone().tolist())
 
         # Optimization step with optional gradient accumulation
@@ -526,8 +522,10 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
     return mean_train_loss, c_index
 
 
-def get_cumulative_dynamic_auc(train_data, test_data, test_risk_scores, verbose=False):
-    cols = ["censored", "y"]
+def get_cumulative_dynamic_auc(
+    train_data, test_data, test_risk_scores, times, verbose=False
+):
+    cols = ["censored", "time_to_event"]
     train_tuples = train_data[cols].values
     tune_tuples = test_data[cols].values
     survival_train = np.array(
@@ -537,8 +535,14 @@ def get_cumulative_dynamic_auc(train_data, test_data, test_risk_scores, verbose=
         list(zip(tune_tuples[:, 0], tune_tuples[:, 1])), dtype=np.dtype("bool,float")
     )
 
-    train_min, train_max = train_data["y"].min(), train_data["y"].max()
-    test_min, test_max = test_data["y"].min(), test_data["y"].max()
+    train_min, train_max = (
+        train_data["time_to_event"].min(),
+        train_data["time_to_event"].max(),
+    )
+    test_min, test_max = (
+        test_data["time_to_event"].min(),
+        test_data["time_to_event"].max(),
+    )
     min_y = math.ceil(test_min / 12)  # Convert months to years
     max_y = math.floor(test_max / 12)
     times = np.arange(min_y, max_y, 1)  # Evaluate AUC at 1-year time intervals
