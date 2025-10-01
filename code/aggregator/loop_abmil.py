@@ -40,5 +40,7 @@ class LoopABMIL(nn.Module):
         # Pass through classifier
         features = self.dropout(features)
         logits = self.classifier(features)
-        results_dict = {"logits": logits, "att_weights": att_weights}
+        Y_prob = torch.sigmoid(logits)
+        Y_hat = torch.argmax(logits, dim=1)
+        results_dict = {"logits": logits, "Y_prob": Y_prob, "Y_hat": Y_hat, "att_weights": att_weights}
         return results_dict
