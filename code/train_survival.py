@@ -199,24 +199,6 @@ def set_random_seed(seed_value):
         torch.backends.cudnn.benchmark = False  # If True, causes cuDNN to benchmark multiple convolution algorithms and select the fastest.
 
 
-def collate_survival(batch):
-    """
-    Collation function for slide_dataset_survival.
-    Groups features into a list and stacks other elements into tensors.
-    """
-    features = [torch.Tensor(item["features"]) for item in batch]
-    discrete_labels = torch.tensor([item["discrete_label"] for item in batch])
-    time_to_events = torch.tensor([item["time_to_event"] for item in batch])
-    censored = torch.tensor([bool(item["censored"]) for item in batch])
-
-    return {
-        "features": features,
-        "discrete_label": discrete_labels,
-        "time_to_event": time_to_events,
-        "censored": censored,
-    }
-
-
 def main(config):
 
     # Initialize wandb
