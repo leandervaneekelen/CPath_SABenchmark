@@ -9,8 +9,8 @@ import numpy as np
 import os
 from functools import partial
 
-from code.train_classification import main as train_classification
-from code.train_survival import main as train_survival
+from train_classification import main as train_classification
+from train_survival import main as train_survival
 
 
 def parse_args():
@@ -70,47 +70,33 @@ def reset_wandb_env():
 
 def multi_fold_train(args):
 
-    # Start new wandb sweep run to save the aggregated metrics to
+    # Start new wandb sweep
     sweep_run = wandb.init()
-    sweep_id = sweep_run.sweep_id or "unknown"
-    sweep_url = sweep_run.get_sweep_url()
-    project_url = sweep_run.get_project_url()
-    sweep_group_url = f"{project_url}/groups/{sweep_id}"
-    sweep_run.notes = sweep_group_url
-    sweep_run.save()
-    sweep_run_name = sweep_run.name or sweep_run.id or "unknown_2"
-    sweep_run_id = sweep_run.id
-    sweep_run.finish()
-    wandb.sdk.wandb_setup._setup(_reset=True)
 
     # Set task
     train = train_classification if args.task == "classification" else train_survival
 
-    # Do training run for each fold
-    folds = [1, 2, 3, 4, 5]
+    folds = ["cv1", "cv2", "cv3", "cv4"]
     evaluation_metrics = []
-    for fold in folds:
 
-        # Give wandb identifiers to each run
-        reset_wandb_env()
-        setattr(args, "sweep_id", sweep_id)
-        setattr(args, "sweep_run_name", sweep_run_name)
-        setattr(args, "sweep_run_id", sweep_run_id)
+    for i, fold in enumerate(folds):
 
-        # Sync hyperparameters
+        # Sync hyperparameters from sweep
         for key, value in sweep_run.config.items():
             setattr(args, key, value)
 
         # Train on fold
         setattr(args, "fold", fold)
-        setattr(args, "random_seed", fold)
+        setattr(args, "random_seed", i)
         eval_metric = train(args)
         evaluation_metrics.append(eval_metric)
 
-    # Resume sweep run and log the average evaluation metric
-    sweep_run = wandb.init(id=sweep_run_id, resume="must")
+    # Calculate and log the average evaluation metric
+    for fold, metric in zip(folds, evaluation_metrics):
+        sweep_run.summary[f"fold_{fold}_eval_metric"] = metric
     avg_eval_metric = np.mean(evaluation_metrics)
-    sweep_run.log({"avg_eval_metric": avg_eval_metric})
+    sweep_run.summary["avg_eval_metric"] = avg_eval_metric
+
     sweep_run.finish()
 
 

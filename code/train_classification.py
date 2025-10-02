@@ -190,20 +190,34 @@ def set_random_seed(seed_value):
 
 
 def main(config=None):
-    # Initialize wandb
-    wandb.init(project=args.wandb_project, notes=args.wandb_note)
+    # Use config if provided, otherwise use args
+    if config is not None:
+        args = config
 
-    if args.sweep_config:
-        for key, value in wandb.config.items():
+    # Initialize wandb
+    is_main_process = __name__ == "__main__"
+    if is_main_process:
+        # Regular standalone run
+        run = wandb.init(project=args.wandb_project, notes=args.wandb_note, config=args)
+        logging_prefix = ""
+    else:
+        # This is a fold run within a sweep - log values with distinct names
+        logging_prefix = f"fold_{args.fold}/"
+        run = wandb.run
+        run_name = f"{run.name}_fold_{args.fold}"
+        setattr(args, "output_name", run_name)
+
+        # TODO: doubtful if this code below is needed
+        for key, value in run.config.items():
             if hasattr(args, key):
                 setattr(args, key, value)
 
         args_dict = vars(args) if isinstance(args, argparse.Namespace) else args
+        to_update = {}
         for key, value in args_dict.items():
-            if key not in wandb.config:
-                wandb.config[key] = value
-
-        wandb.config.update(args_dict, allow_val_change=True)
+            if key not in run.config:
+                to_update[key] = value
+        run.config.update(to_update, allow_val_change=True)
 
     # Randomness
     if args.random_seed is not None:
@@ -264,8 +278,9 @@ def main(config=None):
     )
 
     # Get model
+    ndim = DIMENSIONS_PER_EMBEDDER[args.encoder]
     model = modules.get_aggregator(
-        method=args.method, ndim=args.ndim, n_classes=2
+        method=args.method, ndim=ndim, n_classes=2, dropout=0.8
     )  # TODO: make `n_classes` dynamic
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -308,10 +323,10 @@ def main(config=None):
             wandb.log(
                 {
                     "epoch": epoch,
-                    "val_auc": val_auc,
-                    "val_loss": val_loss,
-                    "val_c_index": val_c_index,
-                }
+                    f"{logging_prefix}val_auc": val_auc,
+                    f"{logging_prefix}val_loss": val_loss,
+                    f"{logging_prefix}val_c_index": val_c_index,
+                },
             )
         else:
             # Regular training and validation logic
@@ -338,22 +353,22 @@ def main(config=None):
             wandb.log(
                 {
                     "epoch": epoch,
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "train_auc": train_auc,
-                    "val_auc": val_auc,
-                    "train_c_index": train_c_index,
-                    "val_c_index": val_c_index,
+                    f"{logging_prefix}train_loss": train_loss,
+                    f"{logging_prefix}val_loss": val_loss,
+                    f"{logging_prefix}train_auc": train_auc,
+                    f"{logging_prefix}val_auc": val_auc,
+                    f"{logging_prefix}train_c_index": train_c_index,
+                    f"{logging_prefix}val_c_index": val_c_index,
                     "lr_step": current_lr,
                     "wd_step": current_wd,
-                }
+                },
             )
 
             # Check if the current model is the best one
             if val_auc > best_auc:
                 print(f"New best model found at epoch {epoch} with AUC: {val_auc}")
                 best_auc = val_auc
-                wandb.run.summary["best_auc"] = val_auc
+                wandb.run.summary[f"{logging_prefix}best_auc"] = val_auc
                 model_filename = (
                     Path(args.output_dir) / f"{args.output_name}_best_auc.pt"
                 )
@@ -369,7 +384,7 @@ def main(config=None):
                     f"New best model found at epoch {epoch} with C-index: {val_c_index}"
                 )
                 best_c_index = val_c_index
-                wandb.run.summary["best_c_index"] = val_c_index
+                wandb.run.summary[f"{logging_prefix}best_c_index"] = val_c_index
                 model_filename = (
                     Path(args.output_dir) / f"{args.output_name}_best_cindex.pt"
                 )
@@ -385,7 +400,7 @@ def main(config=None):
         probs, _ = test(epoch, test_loader, model, criterion)
         test_auc = roc_auc_score(test_loader.dataset.df.y, probs)
         # Log this epoch with a note
-        wandb.log({"epoch": epoch, "test_auc": test_auc})
+        wandb.log({"epoch": epoch, f"{logging_prefix}test_auc": test_auc})
 
     # Model saving logic
     if epoch == args.nepochs:  # only save the last model to artifact
@@ -399,12 +414,9 @@ def main(config=None):
         torch.save(obj, model_filename)
         print(f"Saved final model at epoch {epoch}")
 
-    # # Create a wandb Artifact and add the file to it
-    # model_artifact = wandb.Artifact('final_model_checkpoint', type='model')
-    # model_artifact.add_file(model_filename)
-    # wandb.log_artifact(model_artifact)
-
-    wandb.finish()
+    if is_main_process:
+        run.finish()
+    return val_c_index
 
 
 def test(epoch, loader, model, criterion):
@@ -430,7 +442,9 @@ def test(epoch, loader, model, criterion):
             )
 
             # Forward pass
-            results_dict = modules.model_forward_pass(batch, model, args.method, device)
+            results_dict = modules.model_forward_pass(
+                batch, model, model.method, device
+            )
             logits_, Y_prob, Y_hat = (
                 results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
             )
@@ -459,7 +473,16 @@ def test(epoch, loader, model, criterion):
     )
 
 
-def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
+def train(
+    epoch,
+    loader,
+    model,
+    criterion,
+    optimizer,
+    lr_schedule,
+    wd_schedule,
+    gradient_accumulation_steps=1,
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Set model in training mode
@@ -487,7 +510,7 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
         )
 
         # Forward pass
-        results_dict = modules.model_forward_pass(batch, model, args.method, device)
+        results_dict = modules.model_forward_pass(batch, model, model.method, device)
         logits_, Y_prob, Y_hat = (
             results_dict[key] for key in ["logits", "Y_prob", "Y_hat"]
         )
@@ -506,9 +529,9 @@ def train(epoch, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
         probs.extend(Y_prob.detach()[:, 1].cpu().numpy())
 
         # Optimization step with optional gradient accumulation
-        loss /= args.gradient_accumulation_steps
+        loss /= gradient_accumulation_steps
         loss.backward()
-        if (i + 1) % args.gradient_accumulation_steps == 0:
+        if (i + 1) % gradient_accumulation_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
 
@@ -669,10 +692,6 @@ def update_args_with_selected_hyperparameters(args):
 
 if __name__ == "__main__":
     args = parser.parse_args()
-
-    # Dim of features
-    if args.encoder in DIMENSIONS_PER_EMBEDDER:
-        args.ndim = DIMENSIONS_PER_EMBEDDER[args.encoder]
 
     # Update args with hyperparameters based on the file extension of parameter_path
     if args.parameter_path:

@@ -16,6 +16,7 @@ class LoopABMIL(nn.Module):
         self.classifier = nn.Linear(hidden_dim, output_dim)
         self.dropout = nn.Dropout(dropout)
         self.activation = nn.SiLU()
+        self.method = "LoopABMIL"
 
     def forward(self, batch):
 
@@ -42,5 +43,10 @@ class LoopABMIL(nn.Module):
         logits = self.classifier(features)
         Y_prob = torch.sigmoid(logits)
         Y_hat = torch.argmax(logits, dim=1)
-        results_dict = {"logits": logits, "Y_prob": Y_prob, "Y_hat": Y_hat, "att_weights": att_weights}
+        results_dict = {
+            "logits": logits,
+            "Y_prob": Y_prob,
+            "Y_hat": Y_hat,
+            "att_weights": att_weights,
+        }
         return results_dict

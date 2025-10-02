@@ -204,22 +204,21 @@ def main(config):
     # Initialize wandb
     is_main_process = __name__ == "__main__"
     if is_main_process:
-        run = wandb.init(project=config.wandb_project, notes=config.wandb_note, config=config)
-    else:
-        run_name = f"{config.sweep_run_name}_fold{config.fold}"
-        setattr(config, "output_name", run_name)
+        # Regular standalone run
         run = wandb.init(
-            group=config.sweep_id,
-            job_type=config.sweep_run_name,
-            name=run_name,
-            notes=config.wandb_note,
-            config=config,
-            reinit=True,
+            project=config.wandb_project, notes=config.wandb_note, config=config
         )
- 
-    # In case of hyperparameter tuning: do two-way sync between wandb config and local config
-    # (to facilitate hyperparameter tuning via external config files)
-    if config.sweep_config:
+    else:
+        # This is a fold run within a sweep - log values with distinct names
+        logging_prefix = f"fold_{config.fold}/"
+        run = wandb.run
+        run_name = f"{run.name}_{config.fold}/"
+        setattr(config, "output_name", run_name)
+
+        # In case of hyperparameter tuning: do two-way sync between wandb config and local config
+        # (to facilitate hyperparameter tuning via external config files)
+        # TODO: unsure whether or not this is necessary
+
         for key, value in run.config.items():
             setattr(config, key, value)
 
@@ -290,9 +289,11 @@ def main(config):
     )
 
     # Get model
-    config.ndim = DIMENSIONS_PER_EMBEDDER[config.encoder]
+    ndim = DIMENSIONS_PER_EMBEDDER[config.encoder]
     model = modules.get_aggregator(
-        method=config.method, n_classes=n_bins, ndim=config.ndim
+        method=config.method,
+        n_classes=n_bins,
+        ndim=ndim,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -327,9 +328,15 @@ def main(config):
 
         if epoch == 0:  # Special case for testing feature extractor
             # Validation logic for feature extractor testing
-            val_loss, val_c_index, _ = test(epoch, config, val_loader, model, criterion)
+            val_loss, val_c_index, _ = test(val_loader, model, criterion)
             # Log this epoch with a note
-            run.log({"epoch": epoch, "val_c_index": val_c_index, "val_loss": val_loss})
+            run.log(
+                {
+                    "epoch": epoch,
+                    f"{logging_prefix}val_c_index": val_c_index,
+                    f"{logging_prefix}val_loss": val_loss,
+                },
+            )
         else:
             # Regular training and validation logic
             train_loss, train_c_index = train(
@@ -342,9 +349,7 @@ def main(config):
                 lr_schedule,
                 wd_schedule,
             )
-            val_loss, val_c_index, val_risk_scores = test(
-                epoch, config, val_loader, model, criterion
-            )
+            val_loss, val_c_index, val_risk_scores = test(val_loader, model, criterion)
 
             # _, mean_auc, _ = get_cumulative_dynamic_auc(
             #     train_dset.df, val_dset.df, val_risk_scores, config.y_label
@@ -356,14 +361,14 @@ def main(config):
             run.log(
                 {
                     "epoch": epoch,
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "train_c_index": train_c_index,
-                    "val_c_index": val_c_index,
-                    "val_mean_cumulative_auc": mean_auc,
-                    "lr_step": current_lr,
-                    "wd_step": current_wd,
-                }
+                    f"{logging_prefix}train_loss": train_loss,
+                    f"{logging_prefix}val_loss": val_loss,
+                    f"{logging_prefix}train_c_index": train_c_index,
+                    f"{logging_prefix}val_c_index": val_c_index,
+                    f"{logging_prefix}val_mean_cumulative_auc": mean_auc,
+                    f"{logging_prefix}lr_step": current_lr,
+                    f"{logging_prefix}wd_step": current_wd,
+                },
             )
 
             # Check if the current model is the best one
@@ -372,14 +377,24 @@ def main(config):
                     f"New best model found at epoch {epoch} with (validation) C-index: {val_c_index}"
                 )
                 best_c_index = val_c_index
-                # Log this event to wandb
-                run.summary["best_c_index"] = val_c_index
-                run.summary["best_epoch"] = epoch
+                run.summary[f"{logging_prefix}best_c_index"] = val_c_index
+                model_filename = (
+                    Path(config.output_dir) / f"{config.output_name}_best_cindex.pt"
+                )
+                obj = {
+                    "epoch": epoch,
+                    "state_dict": model.state_dict(),
+                    "c_index": val_c_index,
+                    "optimizer": optimizer.state_dict(),
+                }
+                torch.save(obj, model_filename)
 
     if config.data in ["camelyon16"] and test_loader != None:
-        _, test_c_index = test(epoch, config, test_loader, model, criterion)
+        _, test_c_index = test(test_loader, model, criterion)
         # Log this epoch with a note
-        wandb.log({"epoch": epoch, "test_c_index": test_c_index})
+        wandb.log(
+            {"epoch": epoch, f"{logging_prefix}test_c_index": test_c_index},
+        )
 
     # Model saving logic
     if epoch == config.nepochs:  # only save the last model to artifact
@@ -393,11 +408,12 @@ def main(config):
         torch.save(obj, model_filename)
         print(f"Saved final model at epoch {epoch}")
 
-    run.finish()
+    if is_main_process:
+        run.finish()
     return val_c_index
 
 
-def test(epoch, config, loader, model, criterion):
+def test(loader, model, criterion):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model.eval()
@@ -417,7 +433,7 @@ def test(epoch, config, loader, model, criterion):
 
             # Forward pass
             results_dict = modules.model_forward_pass(
-                batch, model, config.method, device
+                batch, model, model.method, device
             )
 
             # Calculate discrete hazards/survival function
@@ -453,11 +469,20 @@ def test(epoch, config, loader, model, criterion):
     )[0]
 
     # Return metrics & risk scores
-    mean_val_loss = running_loss / len(loader.dataset)
+    mean_val_loss = running_loss / len(loader)
     return mean_val_loss, c_index, risk_scores
 
 
-def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_schedule):
+def train(
+    epoch,
+    loader,
+    model,
+    criterion,
+    optimizer,
+    lr_schedule,
+    wd_schedule,
+    gradient_accumulation_steps=1,
+):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.train()
     running_loss = 0.0
@@ -480,7 +505,7 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
             batch["censored"].bool().to(device),
         )
         # Forward pass
-        results_dict = modules.model_forward_pass(batch, model, config.method, device)
+        results_dict = modules.model_forward_pass(batch, model, model.method, device)
 
         # Calculate discrete hazards/survival function
         logits = results_dict["logits"]  # [batch_size, n_bins]
@@ -507,9 +532,9 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
         times_to_events.extend(time_to_events.clone().tolist())
 
         # Optimization step with optional gradient accumulation
-        loss /= config.gradient_accumulation_steps
+        loss /= gradient_accumulation_steps
         loss.backward()
-        if (i + 1) % config.gradient_accumulation_steps == 0:
+        if (i + 1) % gradient_accumulation_steps == 0:
             optimizer.step()
             optimizer.zero_grad()
 
@@ -518,7 +543,7 @@ def train(epoch, config, loader, model, criterion, optimizer, lr_schedule, wd_sc
         [bool(1 - c) for c in censoring], times_to_events, risk_scores
     )[0]
 
-    mean_train_loss = running_loss / len(loader.dataset)
+    mean_train_loss = running_loss / len(loader)
     return mean_train_loss, c_index
 
 
