@@ -293,6 +293,8 @@ def main(config):
         method=config.method,
         n_classes=n_bins,
         ndim=ndim,
+        dropout=config.dropout if hasattr(config, "dropout") else 0.0,
+        hidden_dim=config.hidden_dim if hasattr(config, "hidden_dim") else 512,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -340,7 +342,6 @@ def main(config):
             # Regular training and validation logic
             train_loss, train_c_index = train(
                 epoch,
-                config,
                 train_loader,
                 model,
                 criterion,

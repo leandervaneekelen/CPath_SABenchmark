@@ -279,7 +279,11 @@ def main(config=None):
     # Get model
     ndim = DIMENSIONS_PER_EMBEDDER[args.encoder]
     model = modules.get_aggregator(
-        method=args.method, ndim=ndim, n_classes=2, dropout=0.8
+        method=args.method,
+        ndim=ndim,
+        n_classes=2,
+        dropout=args.dropout if hasattr(args, "dropout") else 0.0,
+        hidden_dim=args.hidden_dim if hasattr(args, "hidden_dim") else 512,
     )  # TODO: make `n_classes` dynamic
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
