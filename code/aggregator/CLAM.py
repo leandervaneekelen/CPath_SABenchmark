@@ -124,6 +124,7 @@ class CLAM_SB(nn.Module):  # single branch
         self.instance_loss_fn = instance_loss_fn
         self.n_classes = n_classes
         self.subtyping = subtyping
+        self.method = "CLAM_SB"
 
         initialize_weights(self)
 
@@ -267,6 +268,7 @@ class CLAM_MB(CLAM_SB):  # multi branch
         self.instance_loss_fn = instance_loss_fn
         self.n_classes = n_classes
         self.subtyping = subtyping
+        self.method = "CLAM_MB"
         initialize_weights(self)
 
     def forward(

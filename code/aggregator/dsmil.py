@@ -96,6 +96,7 @@ class DSMIL(nn.Module):
         super(DSMIL, self).__init__()
         self.i_classifier = IClassifier(ndim, n_classes)
         self.b_classifier = BClassifier(ndim, n_classes)
+        self.method = "DS-MIL"
 
     def forward(self, x):
         feats, classes = self.i_classifier(x)

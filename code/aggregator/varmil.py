@@ -24,6 +24,7 @@ class VarAttention(nn.Module):
         self.attention = nn.Sequential(
             nn.Linear(self.L, self.D), nn.Tanh(), nn.Linear(self.D, self.K)
         )
+        self.method = "VarMIL"
 
     def compute_weighted_std(self, A, H, M):
         # TODO Now implemented to work with output as given above which is only for batch size of 1

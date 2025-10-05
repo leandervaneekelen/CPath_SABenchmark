@@ -24,6 +24,7 @@ class PureTransformer(nn.Module):
         self.cls_token = nn.Parameter(torch.rand(1, 128))
 
         self.mlp = nn.Linear(128, n_classes)
+        self.method = "ViT_MIL"
 
     def forward(self, tensors):
         # src: (S, N, E)(S,N,E)

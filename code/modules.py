@@ -51,7 +51,7 @@ def get_aggregator(method, n_classes, ndim=1024, **kwargs):
         )
     elif method == "LoopABMIL":
         return LoopABMIL(
-            input_dim=ndim, hidden_dim=512, output_dim=n_classes, **kwargs
+            input_dim=ndim, output_dim=n_classes, **kwargs
         )  # TODO: hidden dim may be chosen better
     # DeepSMILE
     elif method == "VarMIL":

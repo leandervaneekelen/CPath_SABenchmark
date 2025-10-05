@@ -4,6 +4,7 @@ import torch.nn.functional as F
 
 from .patchgcn_utils.model_utils import *
 
+
 ################################
 ### Deep Sets Implementation ###
 ################################
@@ -84,6 +85,7 @@ class MIL_Attention_FC_surv(nn.Module):
         )
 
         self.classifier = nn.Linear(size[2], n_classes)
+        self.method = "AB-MIL_FC_small" if size_arg == "small" else "AB-MIL_FC_big"
 
     def relocate(self):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

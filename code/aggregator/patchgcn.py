@@ -80,6 +80,7 @@ class DeepGraphConv_Surv(torch.nn.Module):
             *[nn.Linear(hidden_dim, hidden_dim), nn.ReLU(), nn.Dropout(dropout)]
         )
         self.classifier = torch.nn.Linear(hidden_dim, n_classes)
+        self.method = "DeepGraphConv"
 
     def relocate(self):
         from torch_geometric.nn import DataParallel
@@ -212,6 +213,7 @@ class PatchGCN_Surv(torch.nn.Module):
         )
 
         self.classifier = torch.nn.Linear(hidden_dim * 4, n_classes)
+        self.method = "PatchGCN"
 
     def forward(self, feat, edge_index, edge_latent):
 

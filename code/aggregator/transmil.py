@@ -65,6 +65,7 @@ class TransMIL(nn.Module):
         self.layer2 = TransLayer(dim=dim)
         self.norm = nn.LayerNorm(dim)
         self._fc2 = nn.Linear(dim, self.n_classes)
+        self.method = "transMIL"
 
     def forward(self, h, **kwargs):
 

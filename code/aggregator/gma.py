@@ -52,6 +52,7 @@ class GMA(nn.Module):
         fc.append(attention_net)
         self.attention_net = nn.Sequential(*fc)
         self.classifier = nn.Linear(size[1], n_classes)
+        self.method = "AB-MIL"
 
         initialize_weights(self)
 

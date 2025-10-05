@@ -55,6 +55,7 @@ class GTP(nn.Module):
             0,
         )  # 64->128
         self.pool1 = Linear(self.embed_dim, self.node_cluster_num)  # 100-> 20
+        self.method = "GTP"
 
     def forward(self, h, adj, mask, is_print=False, graphcam_flag=False):
         node_feat = h
