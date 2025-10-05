@@ -207,9 +207,8 @@ def main(config=None):
         run_name = f"{run.name}_fold_{args.fold}"
         setattr(args, "output_name", run_name)
 
-        # TODO: doubtful if this code below is needed
         for key, value in run.config.items():
-            if hasattr(args, key):
+            if key not in ["fold", "random_seed"]:
                 setattr(args, key, value)
 
         args_dict = vars(args) if isinstance(args, argparse.Namespace) else args
