@@ -101,6 +101,18 @@ parser.add_argument(
     help="Number of epochs for the linear learning-rate warm up.",
 )
 parser.add_argument(
+    "--dropout",
+    type=float,
+    default=0.0,
+    help="Dropout rate (default: 0.0)",
+)
+parser.add_argument(
+    "--hidden_dim",
+    type=int,
+    default=512,
+    help="Hidden dimension for models that use it (default: 512)",
+)
+parser.add_argument(
     "--weight_decay",
     type=float,
     default=0.04,
@@ -341,6 +353,7 @@ def main(config=None):
                 optimizer,
                 lr_schedule,
                 wd_schedule,
+                gradient_accumulation_steps=args.gradient_accumulation_steps,
             )
             train_auc = roc_auc_score(train_targets, train_probs)
             val_c_index, val_targets, val_probs, val_loss = test(
