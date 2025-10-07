@@ -220,7 +220,7 @@ def main(config=None):
         setattr(args, "output_name", run_name)
 
         for key, value in run.config.items():
-            if key not in ["fold", "random_seed"]:
+            if key not in ["fold", "random_seed", "output_name"]:
                 setattr(args, key, value)
 
         args_dict = vars(args) if isinstance(args, argparse.Namespace) else args

@@ -220,6 +220,7 @@ def main(config):
         run = wandb.init(
             project=config.wandb_project, notes=config.wandb_note, config=config
         )
+        logging_prefix = ""
     else:
         # This is a fold run within a sweep - log values with distinct names
         logging_prefix = f"fold_{config.fold}/"
@@ -230,7 +231,7 @@ def main(config):
         # In case of hyperparameter tuning: do two-way sync between wandb config and local config
         # (to facilitate hyperparameter tuning via external config files)
         for key, value in run.config.items():
-            if key not in ["fold", "random_seed"]:
+            if key not in ["fold", "random_seed", "output_name"]:
                 setattr(config, key, value)
 
         arg_dict = vars(config) if isinstance(config, argparse.Namespace) else config
